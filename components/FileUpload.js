@@ -9,42 +9,62 @@ const FileUpload = ({ onUploadComplete }) => {
 
   const uploadFiles = async (hdrFile, bsqFile) => {
     setUploading(true);
+    console.log('Starting upload process');
+    console.log('BSQ file size:', bsqFile.size, 'bytes');
 
     // Upload the HDR file (single request)
     const hdrFormData = new FormData();
     hdrFormData.append('file', hdrFile);
     hdrFormData.append('fileName', hdrFile.name);
 
+    console.log('Uploading HDR file:', hdrFile.name);
     const hdrUploadResponse = await fetch('/api/upload-hdr', {
       method: 'POST',
       body: hdrFormData,
     });
 
     if (!hdrUploadResponse.ok) {
+      console.error('HDR upload failed with status:', hdrUploadResponse.status);
       alert('HDR file upload failed');
       setUploading(false);
       return;
     }
+    console.log('HDR file upload complete');
 
     // Upload the BSQ file in chunks
     const totalChunks = Math.ceil(bsqFile.size / CHUNK_SIZE);
+    console.log('Total chunks to upload:', totalChunks);
+
     for (let currentChunk = 0; currentChunk < totalChunks; currentChunk++) {
       const start = currentChunk * CHUNK_SIZE;
       const end = Math.min(start + CHUNK_SIZE, bsqFile.size);
       const chunk = bsqFile.slice(start, end);
+      console.log(`Uploading chunk ${currentChunk + 1}/${totalChunks}, size: ${chunk.size} bytes`);
 
       const bsqFormData = new FormData();
       bsqFormData.append('chunk', chunk);
       bsqFormData.append('chunkNumber', currentChunk + 1);
       bsqFormData.append('totalChunks', totalChunks);
-      bsqFormData.append('fileName', bsqFile.name); // Ensure fileName is passed
+      bsqFormData.append('fileName', bsqFile.name);
 
-      const bsqUploadResponse = await fetch('/api/upload', {
-        method: 'POST',
-        body: bsqFormData,
-      });
+      try {
+        const bsqUploadResponse = await fetch('/api/upload', {
+          method: 'POST',
+          body: bsqFormData,
+        });
 
-      if (!bsqUploadResponse.ok) {
+        if (!bsqUploadResponse.ok) {
+          console.error(`Chunk ${currentChunk + 1} upload failed with status:`, bsqUploadResponse.status);
+          alert('BSQ chunk upload failed');
+          setUploading(false);
+          return;
+        }
+
+        const responseData = await bsqUploadResponse.json();
+        console.log(`Chunk ${currentChunk + 1} upload response:`, responseData);
+
+      } catch (error) {
+        console.error(`Error uploading chunk ${currentChunk + 1}:`, error);
         alert('BSQ chunk upload failed');
         setUploading(false);
         return;
@@ -53,6 +73,7 @@ const FileUpload = ({ onUploadComplete }) => {
       setUploadProgress(((currentChunk + 1) / totalChunks) * 100);
     }
 
+    console.log('All chunks uploaded successfully');
     setUploading(false);
     setUploadProgress(100);
     onUploadComplete(bsqFile.name);

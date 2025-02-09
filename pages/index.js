@@ -9,19 +9,33 @@ export default function Home() {
   const [imageData, setImageData] = useState(null);
 
   const handleUploadComplete = async (fileName) => {
-    const hdrResponse = await fetch(`/uploads/${fileName.replace('.bsq', '.hdr')}`);
-    const hdrText = await hdrResponse.text();
-    const hdrFile = new File([hdrText], `${fileName}.hdr`, { type: 'text/plain' });
-    const metadata = await parseHDRFile(hdrFile);
+    console.log('Starting post-upload processing for:', fileName);
 
-    const bsqResponse = await fetch(`/uploads/${fileName}`);
-    const bsqBuffer = await bsqResponse.arrayBuffer();
-    const bsqFile = new File([bsqBuffer], fileName, { type: 'application/octet-stream' });
+    try {
+      const hdrResponse = await fetch(`/uploads/${fileName.replace('.bsq', '.hdr')}`);
+      console.log('HDR response status:', hdrResponse.status);
+      const hdrText = await hdrResponse.text();
+      console.log('HDR text received, length:', hdrText.length);
 
-    const data = await parseBSQFile(bsqFile, metadata);
+      const hdrFile = new File([hdrText], `${fileName}.hdr`, { type: 'text/plain' });
+      const metadata = await parseHDRFile(hdrFile);
+      console.log('Parsed metadata:', metadata);
 
-    setHdrMetadata(metadata);
-    setImageData(data);
+      const bsqResponse = await fetch(`/uploads/${fileName}`);
+      console.log('BSQ response status:', bsqResponse.status);
+      const bsqBuffer = await bsqResponse.arrayBuffer();
+      console.log('BSQ buffer received, length:', bsqBuffer.byteLength);
+
+      const bsqFile = new File([bsqBuffer], fileName, { type: 'application/octet-stream' });
+      const data = await parseBSQFile(bsqFile, metadata);
+      console.log('BSQ data parsed, number of bands:', data.length);
+
+      setHdrMetadata(metadata);
+      setImageData(data);
+      console.log('State updated with parsed data');
+    } catch (error) {
+      console.error('Error in handleUploadComplete:', error);
+    }
   };
 
   return (
