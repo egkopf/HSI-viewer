@@ -1,93 +1,55 @@
-// components/FileUpload.js
 import React, { useState } from 'react';
+import { parseHDRFile, parseBSQFile } from '../utils/parseHyperspectral';
 
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB per chunk
+const FileUpload = ({ onUploadComplete }) => { // callback property
+  const [uploadProgress, setUploadProgress] = useState(0); //progress 0-100
+  const [processing, setProcessing] = useState(false); // currently processing files or not
 
-const FileUpload = ({ onUploadComplete }) => {
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploading, setUploading] = useState(false);
+  const processFiles = async (hdrFile, bsqFile) => {
+    try {
+      setProcessing(true);
 
-  const uploadFiles = async (hdrFile, bsqFile) => {
-    setUploading(true);
-    console.log('Starting upload process');
-    console.log('BSQ file size:', bsqFile.size, 'bytes');
+      console.log('Processing HDR file:', hdrFile.name);
+      const metadata = await parseHDRFile(hdrFile); // Process HDR file
+      console.log('HDR metadata parsed:', metadata);
 
-    // Upload the HDR file (single request)
-    const hdrFormData = new FormData();
-    hdrFormData.append('file', hdrFile);
-    hdrFormData.append('fileName', hdrFile.name);
+      // const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunk size just for progress bar (not functional now)
+      // const totalChunks = Math.ceil(bsqFile.size / CHUNK_SIZE);
 
-    console.log('Uploading HDR file:', hdrFile.name);
-    const hdrUploadResponse = await fetch('/api/upload-hdr', {
-      method: 'POST',
-      body: hdrFormData,
-    });
+      console.log('Processing BSQ file:', bsqFile.name);
+      const bsqBuffer = await bsqFile.arrayBuffer(); // read the entire BSQ file at once because processing client-side
+      console.log('BSQ file loaded, size:', bsqBuffer.byteLength);
 
-    if (!hdrUploadResponse.ok) {
-      console.error('HDR upload failed with status:', hdrUploadResponse.status);
-      alert('HDR file upload failed');
-      setUploading(false);
-      return;
+      const imageData = await parseBSQFile(new File([bsqBuffer], bsqFile.name), metadata); // Process BSQ file
+      console.log('BSQ processing complete');
+
+      setUploadProgress(100);
+      setProcessing(false);
+
+      // pass all processed data back to parent component
+      onUploadComplete({
+        fileName: bsqFile.name,
+        metadata,
+        imageData
+      });
+
+    } catch (error) { // error processing
+      console.error('Error processing files:', error);
+      setProcessing(false);
+      alert('File processing failed: ' + error.message);
     }
-    console.log('HDR file upload complete');
-
-    // Upload the BSQ file in chunks
-    const totalChunks = Math.ceil(bsqFile.size / CHUNK_SIZE);
-    console.log('Total chunks to upload:', totalChunks);
-
-    for (let currentChunk = 0; currentChunk < totalChunks; currentChunk++) {
-      const start = currentChunk * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, bsqFile.size);
-      const chunk = bsqFile.slice(start, end);
-      console.log(`Uploading chunk ${currentChunk + 1}/${totalChunks}, size: ${chunk.size} bytes`);
-
-      const bsqFormData = new FormData();
-      bsqFormData.append('chunk', chunk);
-      bsqFormData.append('chunkNumber', currentChunk + 1);
-      bsqFormData.append('totalChunks', totalChunks);
-      bsqFormData.append('fileName', bsqFile.name);
-
-      try {
-        const bsqUploadResponse = await fetch('/api/upload', {
-          method: 'POST',
-          body: bsqFormData,
-        });
-
-        if (!bsqUploadResponse.ok) {
-          console.error(`Chunk ${currentChunk + 1} upload failed with status:`, bsqUploadResponse.status);
-          alert('BSQ chunk upload failed');
-          setUploading(false);
-          return;
-        }
-
-        const responseData = await bsqUploadResponse.json();
-        console.log(`Chunk ${currentChunk + 1} upload response:`, responseData);
-
-      } catch (error) {
-        console.error(`Error uploading chunk ${currentChunk + 1}:`, error);
-        alert('BSQ chunk upload failed');
-        setUploading(false);
-        return;
-      }
-
-      setUploadProgress(((currentChunk + 1) / totalChunks) * 100);
-    }
-
-    console.log('All chunks uploaded successfully');
-    setUploading(false);
-    setUploadProgress(100);
-    onUploadComplete(bsqFile.name);
   };
 
   const handleFileUpload = (files) => {
     const hdrFile = [...files].find(file => file.name.endsWith('.hdr'));
     const bsqFile = [...files].find(file => file.name.endsWith('.bsq'));
 
-    if (hdrFile && bsqFile) {
-      uploadFiles(hdrFile, bsqFile);
-    } else {
+    if (!hdrFile || !bsqFile) {
       alert('Please upload both .hdr and .bsq files.');
+      return;
     }
+
+    processFiles(hdrFile, bsqFile);
   };
 
   return (
@@ -97,12 +59,12 @@ const FileUpload = ({ onUploadComplete }) => {
         accept=".bsq,.hdr"
         multiple
         onChange={(e) => handleFileUpload(e.target.files)}
-        disabled={uploading}
+        disabled={processing}
       />
-      {uploading && (
+      {processing && (
         <div>
           <progress value={uploadProgress} max="100"></progress>
-          <p>{Math.round(uploadProgress)}% uploaded</p>
+          <p>{Math.round(uploadProgress)}% processed</p>
         </div>
       )}
     </div>
