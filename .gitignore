@@ -34,5 +34,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# package files
 package.json
 package-lock.json
+
+# hyperspectral data files
+*.bsq
+*.hdr
