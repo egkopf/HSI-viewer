@@ -1,10 +1,7 @@
-// utils/parseHyperspectral.js
-
 export async function parseHDRFile(hdrFile) {
-  const text = await hdrFile.text(); // Read the content of the HDR file as a string
+  const text = await hdrFile.text();
   const metadata = {};
 
-  // Parse the HDR file line by line
   text.split('\n').forEach((line) => {
     const [key, value] = line.split('=');
     if (key && value) {
@@ -12,58 +9,76 @@ export async function parseHDRFile(hdrFile) {
     }
   });
 
-  // Convert essential metadata into numbers (samples and lines)
   return {
     ...metadata,
     samples: parseInt(metadata.samples, 10),
     lines: parseInt(metadata.lines, 10),
-    bands: parseInt(metadata.bands, 10),  // Assuming "bands" is provided in the hdr
+    bands: parseInt(metadata.bands, 10),
   };
 }
 
-export async function parseBSQFile(bsqFile, metadata) {
-  try {
-    console.log('Starting BSQ parsing with metadata:', {
-      samples: metadata.samples,
-      lines: metadata.lines,
-      bands: metadata.bands
-    });
+export async function parseRGBPreview(bsqFile, metadata, rgbBands) {
+  const { samples, lines } = metadata;
+  const buffer = await bsqFile.arrayBuffer();
+  const view = new DataView(buffer);
+  const bytesPerSample = 2;
 
-    const { samples, lines, bands } = metadata;
-    const buffer = await bsqFile.arrayBuffer();
-    const view = new DataView(buffer);
+  // Create array for just these 3 bands
+  const previewData = [[], [], []];  // One array for each RGB band
 
-    console.log('Buffer size:', buffer.byteLength, 'bytes');
-    console.log('Expected size:', samples * lines * bands * 2, 'bytes');
+  // Load each of the three bands we need
+  for (let i = 0; i < 3; i++) {
+    const bandNumber = rgbBands[i]; // This is the 1-based band number from metadata
+    const bandIndex = i;  // This is the index in preview array (0, 1, or 2)
 
-    const data = [];
-    const bytesPerSample = 2;
+    // Initialize the 2D array for this band
+    previewData[bandIndex] = Array(lines).fill().map(() => Array(samples).fill(0));
 
-    for (let band = 0; band < bands; band++) {
-      if (band % 10 === 0) {
-        console.log(`Processing band ${band}/${bands}`);
+    // offset for this band in the file
+    const bandOffset = (bandNumber - 1) * lines * samples * bytesPerSample;
+
+    // Read the data for this band
+    for (let line = 0; line < lines; line++) {
+      for (let sample = 0; sample < samples; sample++) {
+        const offset = bandOffset +
+          line * samples * bytesPerSample +
+          sample * bytesPerSample;
+
+        previewData[bandIndex][line][sample] = view.getUint16(offset, true);
       }
-      const bandData = [];
-      for (let line = 0; line < lines; line++) {
-        const lineData = [];
-        for (let sample = 0; sample < samples; sample++) {
-          const offset = band * lines * samples * bytesPerSample +
-            line * samples * bytesPerSample +
-            sample * bytesPerSample;
-          if (offset >= buffer.byteLength) {
-            throw new Error(`Buffer overflow at band ${band}, line ${line}, sample ${sample}, offset ${offset}`);
-          }
-          lineData.push(view.getUint16(offset, true));
-        }
-        bandData.push(lineData);
-      }
-      data.push(bandData);
     }
-
-    console.log('BSQ parsing complete');
-    return data;
-  } catch (error) {
-    console.error('Error parsing BSQ file:', error);
-    throw error;
   }
+
+  return previewData;
+}
+
+export async function parseFullBSQ(bsqFile, metadata, onProgress) {
+  const { samples, lines, bands } = metadata;
+  const buffer = await bsqFile.arrayBuffer();
+  const view = new DataView(buffer);
+  const bytesPerSample = 2;
+
+  const data = [];
+
+  for (let band = 0; band < bands; band++) {
+    const bandData = [];
+    for (let line = 0; line < lines; line++) {
+      const lineData = [];
+      for (let sample = 0; sample < samples; sample++) {
+        const offset = band * lines * samples * bytesPerSample +
+          line * samples * bytesPerSample +
+          sample * bytesPerSample;
+        lineData.push(view.getUint16(offset, true));
+      }
+      bandData.push(lineData);
+    }
+    data.push(bandData);
+
+    // Report progress
+    if (onProgress) {
+      onProgress((band + 1) / bands * 100);
+    }
+  }
+
+  return data;
 }

@@ -1,41 +1,60 @@
 import React, { useState } from 'react';
-import { parseHDRFile, parseBSQFile } from '../utils/parseHyperspectral';
+import { parseHDRFile, parseRGBPreview, parseFullBSQ } from '../utils/parseHyperspectral';
 
-const FileUpload = ({ onUploadComplete }) => { // callback property
-  const [uploadProgress, setUploadProgress] = useState(0); //progress 0-100
-  const [processing, setProcessing] = useState(false); // currently processing files or not
+const FileUpload = ({ onPreviewReady, onFullDataReady }) => {
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [processing, setProcessing] = useState(false);
+  const [processingFull, setProcessingFull] = useState(false);
 
   const processFiles = async (hdrFile, bsqFile) => {
     try {
       setProcessing(true);
 
+      // Parse HDR file first
       console.log('Processing HDR file:', hdrFile.name);
-      const metadata = await parseHDRFile(hdrFile); // Process HDR file
+      const metadata = await parseHDRFile(hdrFile);
       console.log('HDR metadata parsed:', metadata);
 
-      // const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunk size just for progress bar (not functional now)
-      // const totalChunks = Math.ceil(bsqFile.size / CHUNK_SIZE);
+      // Get default RGB bands or use fallback values
+      const defaultBands = metadata["default bands"]
+        ? metadata["default bands"].replace(/[{}]/g, '').split(',').map(Number)
+        : [60, 40, 20]; // Fallback RGB bands if not specified
 
-      console.log('Processing BSQ file:', bsqFile.name);
-      const bsqBuffer = await bsqFile.arrayBuffer(); // read the entire BSQ file at once because processing client-side
-      console.log('BSQ file loaded, size:', bsqBuffer.byteLength);
+      // Quick parse of just the RGB bands
+      console.log('Processing RGB preview...');
+      const rgbData = await parseRGBPreview(bsqFile, metadata, defaultBands);
 
-      const imageData = await parseBSQFile(new File([bsqBuffer], bsqFile.name), metadata); // Process BSQ file
-      console.log('BSQ processing complete');
-
-      setUploadProgress(100);
-      setProcessing(false);
-
-      // pass all processed data back to parent component
-      onUploadComplete({
+      // Send the preview data to parent
+      onPreviewReady({
         fileName: bsqFile.name,
         metadata,
-        imageData
+        imageData: rgbData
       });
 
-    } catch (error) { // error processing
+      setProcessing(false);
+
+      // Start processing the full dataset in the background
+      setProcessingFull(true);
+      console.log('Processing full hyperspectral data...');
+
+      const fullData = await parseFullBSQ(bsqFile, metadata, (progress) => {
+        setUploadProgress(progress);
+      });
+
+      setProcessingFull(false);
+      setUploadProgress(100);
+
+      // Send the complete data to parent
+      onFullDataReady({
+        fileName: bsqFile.name,
+        metadata,
+        imageData: fullData
+      });
+
+    } catch (error) {
       console.error('Error processing files:', error);
       setProcessing(false);
+      setProcessingFull(false);
       alert('File processing failed: ' + error.message);
     }
   };
@@ -59,12 +78,18 @@ const FileUpload = ({ onUploadComplete }) => { // callback property
         accept=".bsq,.hdr"
         multiple
         onChange={(e) => handleFileUpload(e.target.files)}
-        disabled={processing}
+        disabled={processing || processingFull}
       />
-      {processing && (
+      {(processing || processingFull) && (
         <div>
-          <progress value={uploadProgress} max="100"></progress>
-          <p>{Math.round(uploadProgress)}% processed</p>
+          {processing ? (
+            <p>Generating preview...</p>
+          ) : (
+            <>
+              <progress value={uploadProgress} max="100" />
+              <p>Processing full dataset: {Math.round(uploadProgress)}%</p>
+            </>
+          )}
         </div>
       )}
     </div>
