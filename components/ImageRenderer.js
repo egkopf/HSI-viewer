@@ -2,43 +2,88 @@ import React, { useEffect, useRef, useState } from 'react';
 
 const ImageRenderer = ({ data, metadata, isPreview }) => {
   const canvasRef = useRef(null);
+  const [bandIndices, setBandIndices] = useState({
+    red: 0,
+    green: 0,
+    blue: 0
+  });
 
+  // Temporary input state to handle form changes before submission
+  const [inputBands, setInputBands] = useState({
+    red: 0,
+    green: 0,
+    blue: 0
+  });
+
+  // Initialize default bands on first render with metadata
+  useEffect(() => {
+    if (metadata && metadata["default bands"]) {
+      const defaultVals = metadata["default bands"].replace(/[{}]/g, '').split(',').map(Number);
+
+      const newBands = {
+        red: defaultVals[0],
+        green: defaultVals[1],
+        blue: defaultVals[2]
+      };
+
+      setBandIndices(newBands);
+      setInputBands(newBands);
+    }
+  }, [metadata]);
+
+  // Handle input changes
+  const handleInputChange = (channel, value) => {
+    setInputBands(prev => ({
+      ...prev,
+      [channel]: value
+    }));
+  };
+
+  // Handle form submission (when user presses Enter)
+  const handleSubmit = (e) => {
+    e.preventDefault();
+
+    // Create a new object for the updated bands
+    const newBands = { ...inputBands };
+    let isValid = true;
+
+    // Validate all band numbers
+    Object.keys(newBands).forEach(channel => {
+      const bandNum = parseInt(newBands[channel], 10);
+
+      if (isNaN(bandNum) || bandNum < 1 || bandNum > metadata.bands) {
+        alert(`Please enter a valid band number between 1 and ${metadata.bands} for ${channel.toUpperCase()}`);
+        // Reset to previous value
+        newBands[channel] = bandIndices[channel];
+        isValid = false;
+      } else {
+        // Keep the validated number
+        newBands[channel] = bandNum;
+      }
+    });
+
+    // Only update if all values are valid
+    if (isValid) {
+      console.log('Updating all bands to:', newBands);
+      setBandIndices(newBands);
+    }
+
+    // Make sure input fields reflect the final values (whether changed or not)
+    setInputBands(newBands);
+  };
+
+  // Main rendering effect - runs when bandIndices change
   useEffect(() => {
     if (data && metadata) {
-      console.log(`Rendering ${isPreview ? 'preview' : 'full'} data`);
-      console.log('Data structure:', {
-        numberOfBands: data.length,
-        bandSize: data[0]?.length,
-        lineSize: data[0]?.[0]?.length
-      });
+      console.log(`Rendering ${isPreview ? 'preview' : 'full'} data with bands:`, bandIndices);
 
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
-      let defaultBands = false;
-      let defaultVals, defaultRed, defaultGreen, defaultBlue;
 
       const samples = parseInt(metadata.samples, 10);
       const lines = parseInt(metadata.lines, 10);
 
-      // Checking to see if .hdr has default bands for visualization
-      if (metadata["default bands"]) {
-        defaultBands = true;
-        defaultVals = metadata["default bands"].replace(/[{}]/g, '').split(',').map(Number);
-        if (isPreview) {
-          // For preview, data is already in RGB order
-          defaultRed = 0;
-          defaultGreen = 1;
-          defaultBlue = 2;
-          console.log('Using preview band indices:', { defaultRed, defaultGreen, defaultBlue });
-        } else {
-          // For full data, need to use actual band numbers (converting to 0-based)
-          defaultRed = defaultVals[0] - 1;
-          defaultGreen = defaultVals[1] - 1;
-          defaultBlue = defaultVals[2] - 1;
-          console.log('Using full data band indices:', { defaultRed, defaultGreen, defaultBlue });
-        }
-      }
-
+      // Early exit if invalid dimensions
       if (isNaN(samples) || isNaN(lines)) {
         console.error('Invalid samples or lines values');
         return;
@@ -48,103 +93,198 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       canvas.width = samples;
       canvas.height = lines;
 
-      // Create ImageData to manipulate pixel values
-      const imageData = ctx.createImageData(samples, lines);
-
-      // Calculate statistics for each band
-      const getBandStats = (bandIndex) => {
-        if (!data[bandIndex]) {
-          console.error(`Band ${bandIndex} not found in data`);
-          return { min: 0, max: 65535 };
-        }
-
-        const values = [];
-        for (let line = 0; line < lines; line++) {
-          for (let sample = 0; sample < samples; sample++) {
-            if (data[bandIndex][line] && data[bandIndex][line][sample] !== undefined) {
-              values.push(data[bandIndex][line][sample]);
-            }
-          }
-        }
-
-        if (values.length === 0) {
-          console.error(`No valid values found in band ${bandIndex}`);
-          return { min: 0, max: 65535 };
-        }
-
-        values.sort((a, b) => a - b);
-        const lowerIndex = Math.floor(values.length * 0.02);
-        const upperIndex = Math.floor(values.length * 0.98);
-
-        return {
-          min: values[lowerIndex],
-          max: values[upperIndex]
-        };
-      };
-
-      // Get stats for the bands we'll display
-      const bandStats = defaultBands ? {
-        red: getBandStats(defaultRed),
-        green: getBandStats(defaultGreen),
-        blue: getBandStats(defaultBlue)
-      } : {
-        gray: getBandStats(0)
-      };
-
-      console.log('Band statistics:', bandStats);
-
-      // Normalize function with gamma correction
-      const normalize = (value, min, max) => {
-        let normalized = (value - min) / (max - min);
-        normalized = Math.max(0, Math.min(1, normalized));
-        normalized = Math.pow(normalized, 0.8);
-        return Math.floor(normalized * 255);
-      };
-
-      // Process each pixel
-      for (let i = 0; i < samples * lines; i++) {
-        const line = Math.floor(i / samples);
-        const sample = i % samples;
-
-        if (defaultBands) {
-          try {
-            const redValue = data[defaultRed][line][sample];
-            const greenValue = data[defaultGreen][line][sample];
-            const blueValue = data[defaultBlue][line][sample];
-
-            const normalizedRed = normalize(redValue, bandStats.red.min, bandStats.red.max);
-            const normalizedGreen = normalize(greenValue, bandStats.green.min, bandStats.green.max);
-            const normalizedBlue = normalize(blueValue, bandStats.blue.min, bandStats.blue.max);
-
-            imageData.data[i * 4 + 0] = normalizedRed;
-            imageData.data[i * 4 + 1] = normalizedGreen;
-            imageData.data[i * 4 + 2] = normalizedBlue;
-            imageData.data[i * 4 + 3] = 255;
-          } catch (error) {
-            console.error(`Error processing pixel at line ${line}, sample ${sample}:`, error);
-            // Set to black if there's an error
-            imageData.data[i * 4 + 0] = 0;
-            imageData.data[i * 4 + 1] = 0;
-            imageData.data[i * 4 + 2] = 0;
-            imageData.data[i * 4 + 3] = 255;
-          }
-        } else {
-          const value = data[0][line][sample];
-          const normalizedValue = normalize(value, bandStats.gray.min, bandStats.gray.max);
-
-          imageData.data[i * 4 + 0] = normalizedValue;
-          imageData.data[i * 4 + 1] = normalizedValue;
-          imageData.data[i * 4 + 2] = normalizedValue;
-          imageData.data[i * 4 + 3] = 255;
-        }
+      // For preview, we always use the pre-processed RGB data
+      if (isPreview) {
+        renderPreviewData(ctx, data, samples, lines);
+        return;
       }
 
-      ctx.putImageData(imageData, 0, 0);
-      console.log(`Finished rendering ${isPreview ? 'preview' : 'full'} data`);
+      // For full data, we use the selected bands
+      renderFullData(ctx, data, samples, lines, bandIndices);
     }
-  }, [data, metadata, isPreview]);
+  }, [data, metadata, isPreview, bandIndices]);
 
-  return <canvas ref={canvasRef} />;
+  // Render preview data (pre-processed RGB)
+  const renderPreviewData = (ctx, data, samples, lines) => {
+    const imageData = ctx.createImageData(samples, lines);
+
+    // Calculate statistics for preview bands
+    const bandStats = {
+      red: calculateBandStats(data[0], samples, lines),
+      green: calculateBandStats(data[1], samples, lines),
+      blue: calculateBandStats(data[2], samples, lines)
+    };
+
+    // Process each pixel
+    for (let i = 0; i < samples * lines; i++) {
+      const line = Math.floor(i / samples);
+      const sample = i % samples;
+
+      try {
+        const redValue = data[0][line][sample];
+        const greenValue = data[1][line][sample];
+        const blueValue = data[2][line][sample];
+
+        const normalizedRed = normalize(redValue, bandStats.red.min, bandStats.red.max);
+        const normalizedGreen = normalize(greenValue, bandStats.green.min, bandStats.green.max);
+        const normalizedBlue = normalize(blueValue, bandStats.blue.min, bandStats.blue.max);
+
+        imageData.data[i * 4 + 0] = normalizedRed;
+        imageData.data[i * 4 + 1] = normalizedGreen;
+        imageData.data[i * 4 + 2] = normalizedBlue;
+        imageData.data[i * 4 + 3] = 255;
+      } catch (error) {
+        console.error(`Error processing pixel at line ${line}, sample ${sample}:`, error);
+        // Set to black if there's an error
+        imageData.data[i * 4 + 0] = 0;
+        imageData.data[i * 4 + 1] = 0;
+        imageData.data[i * 4 + 2] = 0;
+        imageData.data[i * 4 + 3] = 255;
+      }
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+  };
+
+  // Render full data with user-selected bands
+  const renderFullData = (ctx, data, samples, lines, bandIndices) => {
+    const imageData = ctx.createImageData(samples, lines);
+
+    // Convert from 1-based band numbers (user facing) to 0-based indices
+    const redIndex = bandIndices.red - 1;
+    const greenIndex = bandIndices.green - 1;
+    const blueIndex = bandIndices.blue - 1;
+
+    // Calculate statistics for selected bands
+    const bandStats = {
+      red: calculateBandStats(data[redIndex], samples, lines),
+      green: calculateBandStats(data[greenIndex], samples, lines),
+      blue: calculateBandStats(data[blueIndex], samples, lines)
+    };
+
+    console.log('Band statistics for rendering:', bandStats);
+
+    // Process each pixel
+    for (let i = 0; i < samples * lines; i++) {
+      const line = Math.floor(i / samples);
+      const sample = i % samples;
+
+      try {
+        const redValue = data[redIndex][line][sample];
+        const greenValue = data[greenIndex][line][sample];
+        const blueValue = data[blueIndex][line][sample];
+
+        const normalizedRed = normalize(redValue, bandStats.red.min, bandStats.red.max);
+        const normalizedGreen = normalize(greenValue, bandStats.green.min, bandStats.green.max);
+        const normalizedBlue = normalize(blueValue, bandStats.blue.min, bandStats.blue.max);
+
+        imageData.data[i * 4 + 0] = normalizedRed;
+        imageData.data[i * 4 + 1] = normalizedGreen;
+        imageData.data[i * 4 + 2] = normalizedBlue;
+        imageData.data[i * 4 + 3] = 255;
+      } catch (error) {
+        console.error(`Error processing pixel at line ${line}, sample ${sample}:`, error);
+        // Set to black if there's an error
+        imageData.data[i * 4 + 0] = 0;
+        imageData.data[i * 4 + 1] = 0;
+        imageData.data[i * 4 + 2] = 0;
+        imageData.data[i * 4 + 3] = 255;
+      }
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+  };
+
+  // Calculate statistics for a band
+  const calculateBandStats = (bandData, samples, lines) => {
+    if (!bandData) {
+      console.error('Band data not found');
+      return { min: 0, max: 65535 };
+    }
+
+    const values = [];
+    for (let line = 0; line < lines; line++) {
+      for (let sample = 0; sample < samples; sample++) {
+        if (bandData[line] && bandData[line][sample] !== undefined) {
+          values.push(bandData[line][sample]);
+        }
+      }
+    }
+
+    if (values.length === 0) {
+      console.error('No valid values found in band');
+      return { min: 0, max: 65535 };
+    }
+
+    values.sort((a, b) => a - b);
+    const lowerIndex = Math.floor(values.length * 0.01);
+    const upperIndex = Math.floor(values.length * 0.99);
+
+    return {
+      min: values[lowerIndex],
+      max: values[upperIndex]
+    };
+  };
+
+  // Normalize function with gamma correction
+  const normalize = (value, min, max) => {
+    let normalized = (value - min) / (max - min);
+    normalized = Math.max(0, Math.min(1, normalized));
+    normalized = Math.pow(normalized, 0.9);
+    return Math.floor(normalized * 255);
+  };
+
+  return (
+    <div>
+      <canvas ref={canvasRef} />
+
+      {!isPreview && (
+        <div className="mt-4">
+          <form onSubmit={handleSubmit} className="flex gap-4">
+            <div className="flex items-center">
+              <label className="mr-2 font-medium text-red-600">R:</label>
+              <input
+                type="number"
+                className="border rounded px-2 py-1 w-16"
+                value={inputBands.red}
+                onChange={(e) => handleInputChange('red', e.target.value)}
+                min="1"
+                max={metadata?.bands || 100}
+              />
+            </div>
+            <div className="flex items-center">
+              <label className="mr-2 font-medium text-green-600">G:</label>
+              <input
+                type="number"
+                className="border rounded px-2 py-1 w-16"
+                value={inputBands.green}
+                onChange={(e) => handleInputChange('green', e.target.value)}
+                min="1"
+                max={metadata?.bands || 100}
+              />
+            </div>
+            <div className="flex items-center">
+              <label className="mr-2 font-medium text-blue-600">B:</label>
+              <input
+                type="number"
+                className="border rounded px-2 py-1 w-16"
+                value={inputBands.blue}
+                onChange={(e) => handleInputChange('blue', e.target.value)}
+                min="1"
+                max={metadata?.bands || 100}
+              />
+            </div>
+            <button
+              type="submit"
+              className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded"
+            >
+              Update
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
 };
 
 export default ImageRenderer;

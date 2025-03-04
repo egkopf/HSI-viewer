@@ -20,61 +20,86 @@ export async function parseHDRFile(hdrFile) {
 export async function parseRGBPreview(bsqFile, metadata, rgbBands) {
   const { samples, lines } = metadata;
   const buffer = await bsqFile.arrayBuffer();
-  const view = new DataView(buffer);
   const bytesPerSample = 2;
+  const totalPixels = samples * lines;
 
-  // Create array for just these 3 bands
-  const previewData = [[], [], []];  // One array for each RGB band
+  // single Uint16Array view of the entire buffer
+  const rawData = new Uint16Array(buffer);
 
-  // Load each of the three bands we need
+  // array for just these 3 bands (R, G, B)
+  const previewData = new Array(3);
+
+  // load each of the three RGB bands we need
   for (let i = 0; i < 3; i++) {
     const bandNumber = rgbBands[i]; // This is the 1-based band number from metadata
     const bandIndex = i;  // This is the index in preview array (0, 1, or 2)
 
+    // Calculate the starting offset for this band (converting from 1-based to 0-based)
+    const bandOffset = (bandNumber - 1) * totalPixels;
+
     // Initialize the 2D array for this band
-    previewData[bandIndex] = Array(lines).fill().map(() => Array(samples).fill(0));
+    const bandData = new Array(lines);
 
-    // offset for this band in the file
-    const bandOffset = (bandNumber - 1) * lines * samples * bytesPerSample;
-
-    // Read the data for this band
+    // Process each line in the band
     for (let line = 0; line < lines; line++) {
-      for (let sample = 0; sample < samples; sample++) {
-        const offset = bandOffset +
-          line * samples * bytesPerSample +
-          sample * bytesPerSample;
+      // Create typed array for this line
+      const lineData = new Uint16Array(samples);
 
-        previewData[bandIndex][line][sample] = view.getUint16(offset, true);
-      }
+      // Calculate the starting offset for this line
+      const lineOffset = bandOffset + (line * samples);
+
+      // Copy an entire line of data at once
+      lineData.set(rawData.subarray(lineOffset, lineOffset + samples));
+
+      // Store the line
+      bandData[line] = lineData;
     }
+
+    // Store the band in the preview data
+    previewData[bandIndex] = bandData;
   }
 
   return previewData;
 }
-
 export async function parseFullBSQ(bsqFile, metadata, onProgress) {
   const { samples, lines, bands } = metadata;
   const buffer = await bsqFile.arrayBuffer();
-  const view = new DataView(buffer);
   const bytesPerSample = 2;
+  const totalPixels = samples * lines;
 
-  const data = [];
+  // Create a single Uint16Array view of the entire buffer
+  const rawData = new Uint16Array(buffer);
 
+  // Pre-allocate the entire data structure
+  const data = new Array(bands);
+
+  // Process one band at a time to avoid memory issues
   for (let band = 0; band < bands; band++) {
-    const bandData = [];
-    for (let line = 0; line < lines; line++) {
-      const lineData = [];
-      for (let sample = 0; sample < samples; sample++) {
-        const offset = band * lines * samples * bytesPerSample +
-          line * samples * bytesPerSample +
-          sample * bytesPerSample;
-        lineData.push(view.getUint16(offset, true));
-      }
-      bandData.push(lineData);
-    }
-    data.push(bandData);
+    // Create a 2D array for this band using a single allocation per line
+    const bandData = new Array(lines);
 
-    // Report progress
+    // Calculate the starting offset for this band
+    const bandOffset = band * totalPixels;
+
+    // Process each line in the band
+    for (let line = 0; line < lines; line++) {
+      // Create typed array for this line
+      const lineData = new Uint16Array(samples);
+
+      // Calculate starting offset for this line
+      const lineOffset = bandOffset + (line * samples);
+
+      // Copy a line of data all at once using set()
+      lineData.set(rawData.subarray(lineOffset, lineOffset + samples));
+
+      // Store the line
+      bandData[line] = lineData;
+    }
+
+    // Store the band
+    data[band] = bandData;
+
+    // Report progress, not functional right now
     if (onProgress) {
       onProgress((band + 1) / bands * 100);
     }
