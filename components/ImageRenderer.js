@@ -72,6 +72,68 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     setInputBands(newBands);
   };
 
+  // Handle pixel click event
+  const handlePixelClick = (event) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !data || !metadata) return;
+
+    // bounding rectangle of the canvas
+    const rect = canvas.getBoundingClientRect();
+
+    // pixel coordinates
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
+    const x = Math.floor((event.clientX - rect.left) * scaleX);
+    const y = Math.floor((event.clientY - rect.top) * scaleY);
+
+    // bounds check
+    if (x < 0 || x >= metadata.samples || y < 0 || y >= metadata.lines) {
+      console.log('Click outside image bounds');
+      return;
+    }
+
+    console.log(`Pixel clicked at: (${x}, ${y})`);
+    console.log(`Current band mapping: R=${bandIndices.red}, G=${bandIndices.green}, B=${bandIndices.blue}`);
+
+    const pixelSpectrum = [];
+
+    // Only collect spectrum data if we have the full dataset
+    if (!isPreview) {
+      console.log('Spectral values for all bands:');
+
+      for (let band = 0; band < metadata.bands; band++) {
+        if (data[band] && data[band][y] && data[band][y][x] !== undefined) {
+          const value = data[band][y][x];
+          pixelSpectrum.push(value);
+          console.log(`band ${band + 1}: ${value}`);
+        }
+      }
+
+      console.log('Full spectrum data:', pixelSpectrum);
+    } else {
+      // For preview, we only have RGB data
+      const redValue = data[0][y][x];
+      const greenValue = data[1][y][x];
+      const blueValue = data[2][y][x];
+
+      console.log('Only RGB values available:', {
+        red: redValue,
+        green: greenValue,
+        blue: blueValue
+      });
+    }
+
+    // Log some relevant metadata
+    console.log('Metadata for spectral plotting:', {
+      samples: metadata.samples,
+      lines: metadata.lines,
+      bands: metadata.bands,
+      // Include any wavelength information if available in metadata
+      wavelength: metadata.wavelength || 'Not available'
+    });
+  };
+
   // Main rendering effect - runs when bandIndices change
   useEffect(() => {
     if (data && metadata) {
@@ -103,6 +165,20 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       renderFullData(ctx, data, samples, lines, bandIndices);
     }
   }, [data, metadata, isPreview, bandIndices]);
+
+  // Event listener for canvas click
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Click event listener
+    canvas.addEventListener('click', handlePixelClick);
+
+    // Clean up event listener on unmount
+    return () => {
+      canvas.removeEventListener('click', handlePixelClick);
+    };
+  }, [data, metadata, isPreview, bandIndices]); // Refresh when these dependencies change
 
   // Render preview data (pre-processed RGB)
   const renderPreviewData = (ctx, data, samples, lines) => {
@@ -236,7 +312,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
 
   return (
     <div>
-      <canvas ref={canvasRef} />
+      <canvas ref={canvasRef} style={{ cursor: 'crosshair' }} />
 
       {!isPreview && (
         <div className="mt-4">
