@@ -15,6 +15,13 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     blue: 0
   });
 
+  // State for spectral graph
+  const [spectralData, setSpectralData] = useState(null);
+  const [clickPosition, setClickPosition] = useState(null);
+
+  // state for cursor stuff
+  const [cursorPosition, setCursorPosition] = useState(null);
+
   // Initialize default bands on first render with metadata
   useEffect(() => {
     if (metadata && metadata["default bands"]) {
@@ -87,30 +94,66 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     const x = Math.floor((event.clientX - rect.left) * scaleX);
     const y = Math.floor((event.clientY - rect.top) * scaleY);
 
+    // Set click position for graph placement
+    setClickPosition({
+      clientX: event.clientX,
+      clientY: event.clientY,
+      x,
+      y
+    });
+
     // bounds check
     if (x < 0 || x >= metadata.samples || y < 0 || y >= metadata.lines) {
       console.log('Click outside image bounds');
+      setSpectralData(null);
       return;
     }
 
     console.log(`Pixel clicked at: (${x}, ${y})`);
     console.log(`Current band mapping: R=${bandIndices.red}, G=${bandIndices.green}, B=${bandIndices.blue}`);
 
-    const pixelSpectrum = [];
-
     // Only collect spectrum data if we have the full dataset
     if (!isPreview) {
-      console.log('Spectral values for all bands:');
+      const pixelSpectrum = [];
+      const wavelengths = [];
 
-      for (let band = 0; band < metadata.bands; band++) {
-        if (data[band] && data[band][y] && data[band][y][x] !== undefined) {
-          const value = data[band][y][x];
-          pixelSpectrum.push(value);
-          console.log(`band ${band + 1}: ${value}`);
+      // Extract wavelength information if available
+      let wavelengthData = [];
+      if (metadata.wavelength) {
+        try {
+          // Try to parse wavelength data from metadata
+          wavelengthData = metadata.wavelength
+            .replace(/[{}]/g, '')
+            .split(',')
+            .map(w => parseFloat(w.trim()));
+        } catch (error) {
+          console.error('Failed to parse wavelength data:', error);
         }
       }
 
-      console.log('Full spectrum data:', pixelSpectrum);
+      // Collect spectral data for all bands
+      for (let band = 0; band < metadata.bands; band++) {
+        if (data[band] && data[band][y] && data[band][y][x] !== undefined) {
+          const value = data[band][y][x];
+
+          // Use band number as x-axis if no wavelength data
+          const wavelength = wavelengthData[band] || band + 1;
+
+          pixelSpectrum.push({
+            band: band + 1,
+            wavelength,
+            value
+          });
+        }
+      }
+
+      // Update spectral data state
+      setSpectralData({
+        spectrum: pixelSpectrum,
+        position: { x, y }
+      });
+
+      console.log('Full spectrum data collected:', pixelSpectrum);
     } else {
       // For preview, we only have RGB data
       const redValue = data[0][y][x];
@@ -122,16 +165,17 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
         green: greenValue,
         blue: blueValue
       });
-    }
 
-    // Log some relevant metadata
-    console.log('Metadata for spectral plotting:', {
-      samples: metadata.samples,
-      lines: metadata.lines,
-      bands: metadata.bands,
-      // Include any wavelength information if available in metadata
-      wavelength: metadata.wavelength || 'Not available'
-    });
+      setSpectralData({
+        spectrum: [
+          { band: 1, wavelength: 1, value: redValue },
+          { band: 2, wavelength: 2, value: greenValue },
+          { band: 3, wavelength: 3, value: blueValue }
+        ],
+        position: { x, y },
+        isPreview: true
+      });
+    }
   };
 
   // Main rendering effect - runs when bandIndices change
@@ -179,6 +223,29 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       canvas.removeEventListener('click', handlePixelClick);
     };
   }, [data, metadata, isPreview, bandIndices]); // Refresh when these dependencies change
+
+  // function to detect clicks outside of the spectral graph for dismissal
+  useEffect(() => {
+    // Only add listener if spectrum is showing
+    if (!spectralData) return;
+
+    const handleOutsideClick = (event) => {
+      // Check if click is on the spectral graph element
+      const isClickOnGraph = event.target.closest('.spectral-graph');
+      const isClickOnCanvas = event.target.closest('canvas');
+
+      // If click is not on graph and not on canvas, dismiss graph
+      if (!isClickOnGraph && !isClickOnCanvas) {
+        setSpectralData(null);
+      }
+    };
+
+    document.addEventListener('click', handleOutsideClick);
+
+    return () => {
+      document.removeEventListener('click', handleOutsideClick);
+    };
+  }, [spectralData]);
 
   // Render preview data (pre-processed RGB)
   const renderPreviewData = (ctx, data, samples, lines) => {
@@ -310,8 +377,249 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     return Math.floor(normalized * 255);
   };
 
+  // Calculate position for spectral graph popup
+  const calculatePopupPosition = () => {
+    if (!clickPosition || !canvasRef.current) return {};
+
+    let left = clickPosition.clientX + 20; // 20px offset from cursor
+    let top = clickPosition.clientY - 20;
+
+    const graphWidth = 320;  // Estimated graph width
+    const graphHeight = 240; // Estimated graph height
+
+    // Check right edge
+    if (left + graphWidth > window.innerWidth) {
+      left = clickPosition.clientX - graphWidth - 20;
+    }
+
+    // Check bottom edge
+    if (top + graphHeight > window.innerHeight) {
+      top = clickPosition.clientY - graphHeight - 20;
+    }
+
+    if (top < 10) top = 10;
+
+    return {
+      position: 'fixed',
+      left: `${left}px`,
+      top: `${top}px`,
+      zIndex: 1000
+    };
+  };
+
+  // Render spectrum graph
+  const renderSpectralGraph = () => {
+    if (!spectralData || !spectralData.spectrum || spectralData.spectrum.length === 0) {
+      return null;
+    }
+
+    // Sort data by wavelength/band for proper display
+    const sortedData = [...spectralData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
+
+    // Make MODULAR!
+    const maxValue = 5000;
+    const minValue = 0;
+
+    // Chart dimensions
+    const chartWidth = 300;
+    const chartHeight = 200;
+    const paddingX = 50;
+    const paddingY = 30;
+    const graphWidth = chartWidth - (paddingX * 2);
+    const graphHeight = chartHeight - (paddingY * 2);
+
+    // points for line
+    const points = sortedData.map((point, index) => {
+      const x = paddingX + (index / (sortedData.length - 1)) * graphWidth;
+      const y = paddingY + graphHeight - ((point.value - minValue) / (maxValue - minValue) * graphHeight);
+      return `${x},${y}`;
+    }).join(' ');
+
+    // x-axis tick values
+    const xTickCount = Math.min(9, sortedData.length);
+    const xTicks = [];
+
+    for (let i = 0; i < xTickCount; i++) {
+      const index = Math.floor(i * (sortedData.length - 1) / (xTickCount - 1));
+      const point = sortedData[index];
+      const x = paddingX + (index / (sortedData.length - 1)) * graphWidth;
+      xTicks.push({
+        x,
+        value: Math.round(point.wavelength)
+      });
+    }
+
+    // Create y-axis tick values
+    const yTickCount = 5;
+    const yTicks = [];
+
+    for (let i = 0; i < yTickCount; i++) {
+      const value = minValue + (i / (yTickCount - 1)) * (maxValue - minValue);
+      const y = paddingY + graphHeight - (i / (yTickCount - 1)) * graphHeight;
+      yTicks.push({
+        y,
+        value: Math.round(value)
+      });
+    }
+
+    const popupStyle = calculatePopupPosition();
+
+    const handleMouseMove = (e) => {
+      const svgRect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - svgRect.left;
+
+      // Only set position if within the graph area
+      if (x >= paddingX && x <= paddingX + graphWidth) {
+        setCursorPosition(x);
+      }
+    };
+
+    const handleMouseLeave = () => {
+      setCursorPosition(null);
+    };
+
+    return (
+      <div
+        className="spectral-graph fixed bg-white border border-gray-300 rounded-lg shadow-lg p-4"
+        style={popupStyle}
+      >
+        <div className="flex justify-between items-center mb-2">
+          <h3 className="text-sm font-semibold">
+            Spectral Profile of Pixel ({spectralData.position.x}, {spectralData.position.y})
+          </h3>
+          <button
+            className="text-gray-500 hover:text-gray-700"
+            onClick={() => setSpectralData(null)}
+          >
+            ×
+          </button>
+        </div>
+
+        {spectralData.isPreview && (
+          <div className="mb-2 text-xs text-orange-500">
+            Limited data in preview mode. Process full dataset for complete spectrum.
+          </div>
+        )}
+
+
+
+        <svg
+          width={chartWidth}
+          height={chartHeight}
+          className="bg-gray-50"
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+        >
+          {/* X axis line */}
+          <line
+            x1={paddingX}
+            y1={paddingY + graphHeight}
+            x2={paddingX + graphWidth}
+            y2={paddingY + graphHeight}
+            stroke="#333"
+            strokeWidth="1"
+          />
+
+          {/* Y axis line */}
+          <line
+            x1={paddingX}
+            y1={paddingY}
+            x2={paddingX}
+            y2={paddingY + graphHeight}
+            stroke="#333"
+            strokeWidth="1"
+          />
+
+          {/* X-axis grid lines & labels */}
+          {xTicks.map((tick, i) => (
+            <React.Fragment key={`x-tick-${i}`}>
+              <line
+                x1={tick.x}
+                y1={paddingY + graphHeight}
+                x2={tick.x}
+                y2={paddingY + graphHeight + 5}
+                stroke="#333"
+                strokeWidth="1"
+              />
+              <text
+                x={tick.x}
+                y={paddingY + graphHeight + 15}
+                fontSize="10"
+                textAnchor="middle"
+              >
+                {tick.value}
+              </text>
+            </React.Fragment>
+          ))}
+
+          {/* Y-axis grid lines & labels */}
+          {yTicks.map((tick, i) => (
+            <React.Fragment key={`y-tick-${i}`}>
+              <line
+                x1={paddingX - 5}
+                y1={tick.y}
+                x2={paddingX}
+                y2={tick.y}
+                stroke="#333"
+                strokeWidth="1"
+              />
+              <text
+                x={paddingX - 8}
+                y={tick.y + 3}
+                fontSize="10"
+                textAnchor="end"
+              >
+                {tick.value}
+              </text>
+            </React.Fragment>
+          ))}
+
+          {/* Data line */}
+          <polyline
+            points={points}
+            fill="none"
+            stroke="#0040a6"
+            strokeWidth="2"
+          />
+
+          {/* vertical examine line */}
+          {cursorPosition && (
+            <line
+              x1={cursorPosition}
+              y1={paddingY}
+              x2={cursorPosition}
+              y2={paddingY + graphHeight}
+              stroke="#FF0000"
+              strokeWidth="1"
+            />
+          )}
+
+          {/* Axis labels */}
+          <text
+            x={chartWidth / 2}
+            y={chartHeight - 5}
+            fontSize="10"
+            textAnchor="middle"
+          >
+            Band
+          </text>
+
+          <text
+            x={15}
+            y={paddingY + (graphHeight / 2)}
+            fontSize="10"
+            textAnchor="middle"
+            transform={`rotate(-90, 15, ${paddingY + (graphHeight / 2)})`}
+          >
+            Intensity
+          </text>
+        </svg>
+      </div>
+    );
+  };
+
   return (
-    <div>
+    <div className="relative">
       <canvas ref={canvasRef} style={{ cursor: 'crosshair' }} />
 
       {!isPreview && (
@@ -359,6 +667,9 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
           </form>
         </div>
       )}
+
+      {/* Render spectral graph popup */}
+      {spectralData && renderSpectralGraph()}
     </div>
   );
 };
