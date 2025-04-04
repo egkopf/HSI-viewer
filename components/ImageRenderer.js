@@ -19,8 +19,74 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
   const [spectralData, setSpectralData] = useState(null);
   const [clickPosition, setClickPosition] = useState(null);
 
+  const [hoveredPoint, setHoveredPoint] = useState(null);
+
+
   // state for cursor stuff
   const [cursorPosition, setCursorPosition] = useState(null);
+
+  const [globalStats, setGlobalStats] = useState({
+    percentile99: 5000 // Default fallback value
+  });
+
+  useEffect(() => {
+    if (!isPreview && data && metadata) {
+      console.log('Calculating global statistics...');
+      calculateGlobalStats(data, metadata);
+    }
+  }, [isPreview, data, metadata]);
+
+  const calculateGlobalStats = (data, metadata) => {
+    const allValues = [];
+    const bands = data.length;
+    const samples = metadata.samples;
+    const lines = metadata.lines;
+    const ignoreValue = parseFloat(metadata["data ignore value"] || 15000.0);
+
+    // Collect sample values across the dataset
+    const samplingRate = 0.05; // Sample 5% of pixels for better performance
+
+    // Sample every 20th band to improve performance
+    for (let band = 0; band < bands; band += 20) {
+      console.log(`Sampling band ${band + 1}/${bands} for statistics...`);
+
+      // Sample 5% of lines and samples
+      for (let line = 0; line < lines; line++) {
+        if (Math.random() > samplingRate) continue;
+
+        if (!data[band] || !data[band][line]) continue;
+
+        for (let sample = 0; sample < samples; sample++) {
+          if (Math.random() > samplingRate) continue;
+
+          const value = data[band][line][sample];
+          if (value !== undefined && value !== ignoreValue) {
+            allValues.push(value);
+          }
+        }
+      }
+    }
+
+    console.log(`Collected ${allValues.length} sample values for statistics`);
+
+    if (allValues.length === 0) {
+      console.error('No valid values found in dataset');
+      return;
+    }
+
+    // Sort values to calculate percentiles
+    allValues.sort((a, b) => a - b);
+
+    // Calculate 99th percentile
+    const index99 = Math.floor(allValues.length * 0.999);
+    const percentile99 = allValues[index99] || 5000;
+
+    setGlobalStats({
+      percentile99: percentile99
+    });
+
+    console.log(`Calculated 99.9th percentile: ${percentile99} from ${allValues.length} samples`);
+  };
 
   // Initialize default bands on first render with metadata
   useEffect(() => {
@@ -115,28 +181,16 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     // Only collect spectrum data if we have the full dataset
     if (!isPreview) {
       const pixelSpectrum = [];
-      const wavelengths = [];
 
-      // Extract wavelength information if available
-      let wavelengthData = [];
-      if (metadata.wavelength) {
-        try {
-          // Try to parse wavelength data from metadata
-          wavelengthData = metadata.wavelength
-            .replace(/[{}]/g, '')
-            .split(',')
-            .map(w => parseFloat(w.trim()));
-        } catch (error) {
-          console.error('Failed to parse wavelength data:', error);
-        }
-      }
+      // Check if we have parsed wavelength data
+      const wavelengthData = metadata.wavelengthValues || [];
 
       // Collect spectral data for all bands
       for (let band = 0; band < metadata.bands; band++) {
         if (data[band] && data[band][y] && data[band][y][x] !== undefined) {
           const value = data[band][y][x];
 
-          // Use band number as x-axis if no wavelength data
+          // Use wavelength data if available, otherwise use band number
           const wavelength = wavelengthData[band] || band + 1;
 
           pixelSpectrum.push({
@@ -154,27 +208,6 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       });
 
       console.log('Full spectrum data collected:', pixelSpectrum);
-    } else {
-      // For preview, we only have RGB data
-      const redValue = data[0][y][x];
-      const greenValue = data[1][y][x];
-      const blueValue = data[2][y][x];
-
-      console.log('Only RGB values available:', {
-        red: redValue,
-        green: greenValue,
-        blue: blueValue
-      });
-
-      setSpectralData({
-        spectrum: [
-          { band: 1, wavelength: 1, value: redValue },
-          { band: 2, wavelength: 2, value: greenValue },
-          { band: 3, wavelength: 3, value: blueValue }
-        ],
-        position: { x, y },
-        isPreview: true
-      });
     }
   };
 
@@ -308,6 +341,8 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     console.log('Band statistics for rendering:', bandStats);
 
     // Process each pixel
+
+    // Copy all data from a line simultaneously
     for (let i = 0; i < samples * lines; i++) {
       const line = Math.floor(i / samples);
       const sample = i % samples;
@@ -417,8 +452,28 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     const sortedData = [...spectralData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
 
     // Make MODULAR!
-    const maxValue = 5000;
+    const maxValue = globalStats.percentile99;
     const minValue = 0;
+
+    const bandPositions = {};
+
+    // Find the wavelength values for the selected bands
+    if (metadata.wavelengthValues) {
+      const wavelengths = metadata.wavelengthValues;
+      const minWavelength = Math.min(...wavelengths);
+      const maxWavelength = Math.max(...wavelengths);
+      const range = maxWavelength - minWavelength;
+
+      // Calculate normalized positions (0-1) based on wavelength
+      bandPositions.red = (wavelengths[bandIndices.red - 1] - minWavelength) / range;
+      bandPositions.green = (wavelengths[bandIndices.green - 1] - minWavelength) / range;
+      bandPositions.blue = (wavelengths[bandIndices.blue - 1] - minWavelength) / range;
+    } else {
+      // Fallback to band index method
+      bandPositions.red = (bandIndices.red - 1) / (metadata.bands - 1);
+      bandPositions.green = (bandIndices.green - 1) / (metadata.bands - 1);
+      bandPositions.blue = (bandIndices.blue - 1) / (metadata.bands - 1);
+    }
 
     // Chart dimensions
     const chartWidth = 300;
@@ -439,15 +494,40 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     const xTickCount = Math.min(9, sortedData.length);
     const xTicks = [];
 
-    for (let i = 0; i < xTickCount; i++) {
-      const index = Math.floor(i * (sortedData.length - 1) / (xTickCount - 1));
-      const point = sortedData[index];
-      const x = paddingX + (index / (sortedData.length - 1)) * graphWidth;
-      xTicks.push({
-        x,
-        value: Math.round(point.wavelength)
-      });
+    const wavelengthValues = sortedData.map(d => d.wavelength);
+    const minWavelength = Math.min(...wavelengthValues);
+    const maxWavelength = Math.max(...wavelengthValues);
+
+    const hasRealWavelengthData = maxWavelength < 10; // quick fix
+
+    if (hasRealWavelengthData) {
+
+      // Create evenly spaced ticks from min to max
+      for (let i = 0; i < xTickCount; i++) {
+        const wavelengthValue = minWavelength + (i / (xTickCount - 1)) * (maxWavelength - minWavelength);
+
+        // Position ticks evenly across the graph
+        const xPosition = paddingX + (i / (xTickCount - 1)) * graphWidth;
+
+        xTicks.push({
+          x: xPosition,
+          value: wavelengthValue.toFixed(2)
+        });
+      }
+    } else {
+      // Fallback to band-based ticks
+      for (let i = 0; i < xTickCount; i++) {
+        const bandNum = Math.floor(1 + i * (sortedData.length - 1) / (xTickCount - 1));
+        const xPosition = paddingX + (i / (xTickCount - 1)) * graphWidth;
+
+        xTicks.push({
+          x: xPosition,
+          value: bandNum
+        });
+      }
     }
+
+    const xAxisLabel = hasRealWavelengthData ? "Wavelength (μm)" : "Band";
 
     // Create y-axis tick values
     const yTickCount = 5;
@@ -471,16 +551,31 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       // Only set position if within the graph area
       if (x >= paddingX && x <= paddingX + graphWidth) {
         setCursorPosition(x);
+
+        // Calculate which data point we're closest to
+        const relativeX = (x - paddingX) / graphWidth;
+        const dataIndex = Math.floor(relativeX * (sortedData.length - 1));
+
+        // Make sure we have a valid index
+        if (dataIndex >= 0 && dataIndex < sortedData.length) {
+          setHoveredPoint({
+            value: sortedData[dataIndex].value,
+            wavelength: sortedData[dataIndex].wavelength,
+            x: paddingX + (dataIndex / (sortedData.length - 1)) * graphWidth,
+            y: paddingY + graphHeight - ((sortedData[dataIndex].value - minValue) / (maxValue - minValue) * graphHeight)
+          });
+        }
       }
     };
 
     const handleMouseLeave = () => {
       setCursorPosition(null);
+      setHoveredPoint(null);
     };
 
     return (
       <div
-        className="spectral-graph fixed bg-white border border-gray-300 rounded-lg shadow-lg p-4"
+        className="spectral-graph fixed bg-white border border-gray-300 shadow-lg p-4"
         style={popupStyle}
       >
         <div className="flex justify-between items-center mb-2">
@@ -582,6 +677,39 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
             strokeWidth="2"
           />
 
+          {/* Red band marker */}
+          <line
+            x1={paddingX + (bandPositions.red * graphWidth)}
+            y1={paddingY}
+            x2={paddingX + (bandPositions.red * graphWidth)}
+            y2={paddingY + graphHeight}
+            stroke="rgba(255, 0, 0, 0.7)"
+            strokeWidth="1"
+            strokeDasharray="4,2"
+          />
+
+          {/* Green band marker */}
+          <line
+            x1={paddingX + (bandPositions.green * graphWidth)}
+            y1={paddingY}
+            x2={paddingX + (bandPositions.green * graphWidth)}
+            y2={paddingY + graphHeight}
+            stroke="rgba(0, 180, 0, 0.7)"
+            strokeWidth="1"
+            strokeDasharray="4,2"
+          />
+
+          {/* Blue band marker */}
+          <line
+            x1={paddingX + (bandPositions.blue * graphWidth)}
+            y1={paddingY}
+            x2={paddingX + (bandPositions.blue * graphWidth)}
+            y2={paddingY + graphHeight}
+            stroke="rgba(0, 0, 255, 0.7)"
+            strokeWidth="1"
+            strokeDasharray="4,2"
+          />
+
           {/* vertical examine line */}
           {cursorPosition && (
             <line
@@ -594,6 +722,30 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
             />
           )}
 
+          {/* Hover value display */}
+          {hoveredPoint && (
+            <>
+              {/* Value point circle */}
+              <circle
+                cx={hoveredPoint.x}
+                cy={hoveredPoint.y}
+                r="2"
+                fill="#0040a6"
+              />
+
+              {/* Value label text */}
+              <text
+                x={hoveredPoint.x + 18}
+                y={hoveredPoint.y - 8}
+                fontSize="12"
+                fill="#0040a6"
+                textAnchor="middle"
+              >
+                {Math.round(hoveredPoint.value)}
+              </text>
+            </>
+          )}
+
           {/* Axis labels */}
           <text
             x={chartWidth / 2}
@@ -601,7 +753,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
             fontSize="10"
             textAnchor="middle"
           >
-            Band
+            {xAxisLabel}
           </text>
 
           <text
@@ -611,7 +763,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
             textAnchor="middle"
             transform={`rotate(-90, 15, ${paddingY + (graphHeight / 2)})`}
           >
-            Intensity
+            Digital Number (DN)
           </text>
         </svg>
       </div>

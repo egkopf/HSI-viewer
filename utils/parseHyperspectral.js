@@ -2,13 +2,70 @@ export async function parseHDRFile(hdrFile) {
   const text = await hdrFile.text();
   const metadata = {};
 
+  // First pass: extract simple key-value pairs
+  let currentKey = null;
+  let currentValue = '';
+  let inMultilineValue = false;
+
   text.split('\n').forEach((line) => {
-    const [key, value] = line.split('=');
-    if (key && value) {
-      metadata[key.trim()] = value.trim();
+    const trimmedLine = line.trim();
+
+    // Check if this line starts a key-value pair
+    if (trimmedLine.includes('=') && !inMultilineValue) {
+      const [key, value] = trimmedLine.split('=');
+      currentKey = key.trim();
+      currentValue = value.trim();
+
+      // Check if this value continues on multiple lines (has opening brace but no closing brace)
+      if (currentValue.includes('{') && !currentValue.includes('}')) {
+        inMultilineValue = true;
+      } else {
+        // Store complete key-value pair
+        metadata[currentKey] = currentValue;
+        currentKey = null;
+        currentValue = '';
+      }
+    }
+    // Continue collecting a multi-line value
+    else if (inMultilineValue && currentKey) {
+      currentValue += ' ' + trimmedLine;
+
+      // Check if this line completes the multi-line value
+      if (trimmedLine.includes('}')) {
+        metadata[currentKey] = currentValue;
+        inMultilineValue = false;
+        currentKey = null;
+        currentValue = '';
+      }
     }
   });
 
+  // Second pass: parse special values like wavelength
+  if (metadata.wavelength) {
+    try {
+      // Extract wavelength values from the multi-line format
+      const wavelengthStr = metadata.wavelength.replace(/[{}]/g, '');
+      const parsedWavelengths = wavelengthStr.split(',')
+        .map(w => parseFloat(w.trim()))
+        .filter(w => !isNaN(w));
+
+      // Verify we have the expected number of wavelength values
+      const expectedBands = parseInt(metadata.bands, 10);
+      if (parsedWavelengths.length === expectedBands) {
+        metadata.wavelengthValues = parsedWavelengths;
+        console.log(`Successfully parsed ${parsedWavelengths.length} wavelength values:`,
+          parsedWavelengths[0], '...', parsedWavelengths[parsedWavelengths.length - 1]);
+      } else {
+        console.error(`Expected ${expectedBands} wavelength values but got ${parsedWavelengths.length}`);
+        metadata.wavelengthValues = [];
+      }
+    } catch (error) {
+      console.error('Error parsing wavelength data:', error);
+      metadata.wavelengthValues = [];
+    }
+  }
+
+  // Parse numeric values
   return {
     ...metadata,
     samples: parseInt(metadata.samples, 10),
