@@ -770,6 +770,26 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     );
   };
 
+  // Get wavelength for a band
+  const getWavelengthForBand = (bandNumber) => {
+    if (!metadata || !metadata.wavelengthValues || bandNumber < 1 || bandNumber > metadata.bands) {
+      return null;
+    }
+    return metadata.wavelengthValues[bandNumber - 1];
+  };
+
+  // Format wavelength value
+  const formatWavelength = (wavelength) => {
+    if (wavelength === null || wavelength === undefined) return '';
+
+    // If wavelength is a small number (like in μm), show with more precision
+    if (wavelength < 10) {
+      return `${wavelength.toFixed(3)} μm`;
+    }
+    // If wavelength is in nm or other larger unit
+    return `${Math.round(wavelength)} nm`;
+  };
+
   return (
     <div className="relative">
       <canvas ref={canvasRef} style={{ cursor: 'crosshair' }} />
@@ -787,6 +807,9 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
                 min="1"
                 max={metadata?.bands || 100}
               />
+              <span className="ml-2 text-sm text-red-600">
+                {formatWavelength(getWavelengthForBand(bandIndices.red))}
+              </span>
             </div>
             <div className="flex items-center">
               <label className="mr-2 font-medium text-green-600">G:</label>
@@ -798,6 +821,9 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
                 min="1"
                 max={metadata?.bands || 100}
               />
+              <span className="ml-2 text-sm text-green-600">
+                {formatWavelength(getWavelengthForBand(bandIndices.green))}
+              </span>
             </div>
             <div className="flex items-center">
               <label className="mr-2 font-medium text-blue-600">B:</label>
@@ -809,6 +835,9 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
                 min="1"
                 max={metadata?.bands || 100}
               />
+              <span className="ml-2 text-sm text-blue-600">
+                {formatWavelength(getWavelengthForBand(bandIndices.blue))}
+              </span>
             </div>
             <button
               type="submit"

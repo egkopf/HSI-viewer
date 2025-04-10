@@ -1,19 +1,58 @@
 import React, { useState } from 'react';
-import { parseHDRFile, parseRGBPreview, parseFullBSQ } from '../utils/parseHyperspectral';
+import { parseHDRFile, parseRGBPreview, parseFullData } from '../utils/parseHyperspectral';
 
 const FileUpload = ({ onPreviewReady, onFullDataReady }) => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [processing, setProcessing] = useState(false);
   const [processingFull, setProcessingFull] = useState(false);
 
-  const processFiles = async (hdrFile, bsqFile) => {
+  const processFiles = async (files) => {
     try {
       setProcessing(true);
 
-      // Parse HDR file first
-      console.log('Processing HDR file:', hdrFile.name);
-      const metadata = await parseHDRFile(hdrFile);
-      console.log('HDR metadata parsed:', metadata);
+      // Find header file first
+      const headerExtensions = ['.hdr', '.HDR'];
+      const headerFile = [...files].find(file =>
+        headerExtensions.some(ext => file.name.toLowerCase().endsWith(ext)));
+
+      if (!headerFile) {
+        throw new Error('Header file (.hdr) required');
+      }
+
+      // Parse header file to determine the expected data filename
+      const metadata = await parseHDRFile(headerFile);
+
+      // Extract base filename (without extension) from header file
+      const headerBaseName = headerFile.name.replace(/\.[^/.]+$/, "");
+
+      // Try to find the data file
+      let dataFile;
+
+      // 1. Check if there's a file with the same base name as the header
+      dataFile = [...files].find(file => {
+        const fileBaseName = file.name.replace(/\.[^/.]+$/, "");
+        return fileBaseName === headerBaseName && file !== headerFile;
+      });
+
+      // 2. If not found, check for files with known extensions
+      if (!dataFile) {
+        const dataExtensions = ['.bsq', '.BSQ', '.bil', '.BIL', '.bip', '.BIP'];
+        dataFile = [...files].find(file =>
+          dataExtensions.some(ext => file.name.toLowerCase().endsWith(ext)));
+      }
+
+      // 3. If still not found, use any non-header file
+      if (!dataFile) {
+        dataFile = [...files].find(file => !headerExtensions.some(ext =>
+          file.name.toLowerCase().endsWith(ext)));
+      }
+
+      if (!dataFile) {
+        throw new Error('Could not find data file. Upload both header and data files.');
+      }
+
+      console.log(`Processing header file: ${headerFile.name}`);
+      console.log(`Processing data file: ${dataFile.name}`);
 
       // Get default RGB bands or use fallback values
       const defaultBands = metadata["default bands"]
@@ -22,11 +61,11 @@ const FileUpload = ({ onPreviewReady, onFullDataReady }) => {
 
       // Quick parse of just the RGB bands
       console.log('Processing RGB preview...');
-      const rgbData = await parseRGBPreview(bsqFile, metadata, defaultBands);
+      const rgbData = await parseRGBPreview(dataFile, metadata, defaultBands);
 
       // Send the preview data to parent
       onPreviewReady({
-        fileName: bsqFile.name,
+        fileName: dataFile.name,
         metadata,
         imageData: rgbData
       });
@@ -35,9 +74,9 @@ const FileUpload = ({ onPreviewReady, onFullDataReady }) => {
 
       // Start processing the full dataset in the background
       setProcessingFull(true);
-      console.log('Processing full hyperspectral data...');
+      console.log(`Processing full hyperspectral data (${metadata.interleave || 'bsq'} format)...`);
 
-      const fullData = await parseFullBSQ(bsqFile, metadata, (progress) => {
+      const fullData = await parseFullData(dataFile, metadata, (progress) => {
         setUploadProgress(progress);
       });
 
@@ -46,7 +85,7 @@ const FileUpload = ({ onPreviewReady, onFullDataReady }) => {
 
       // Send the complete data to parent
       onFullDataReady({
-        fileName: bsqFile.name,
+        fileName: dataFile.name,
         metadata,
         imageData: fullData
       });
@@ -59,39 +98,36 @@ const FileUpload = ({ onPreviewReady, onFullDataReady }) => {
     }
   };
 
-  const handleFileUpload = (files) => {
-    const hdrFile = [...files].find(file => file.name.endsWith('.hdr'));
-    const bsqFile = [...files].find(file => file.name.endsWith('.bsq'));
-
-    if (!hdrFile || !bsqFile) {
-      alert('Please upload both .hdr and .bsq files.');
-      return;
-    }
-
-    processFiles(hdrFile, bsqFile);
-  };
-
   return (
-    <div>
-      <input
-        type="file"
-        accept=".bsq,.hdr"
-        multiple
-        onChange={(e) => handleFileUpload(e.target.files)}
-        disabled={processing || processingFull}
-      />
-      {(processing || processingFull) && (
-        <div>
-          {processing ? (
-            <p>Generating preview...</p>
-          ) : (
-            <>
-              <progress value={uploadProgress} max="100" />
-              <p>Processing full dataset: {Math.round(uploadProgress)}%</p>
-            </>
-          )}
+    <div className="my-4">
+      <div className="flex flex-col gap-2">
+        <div className="p-4 border-2 border-dashed border-gray-300 rounded-lg">
+          <input
+            type="file"
+            accept="*" // Accept all file types
+            multiple
+            onChange={(e) => processFiles(e.target.files)}
+            disabled={processing || processingFull}
+            className="w-full"
+          />
+          <p className="mt-2 text-sm text-gray-500">
+            Upload header (.hdr) file and the corresponding data file (with or without extension)
+          </p>
         </div>
-      )}
+
+        {(processing || processingFull) && (
+          <div className="mt-2">
+            {processing ? (
+              <p>Generating preview...</p>
+            ) : (
+              <div>
+                <progress value={uploadProgress} max="100" className="w-full h-2" />
+                <p className="text-sm text-blue-600">Processing full dataset: {Math.round(uploadProgress)}%</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
