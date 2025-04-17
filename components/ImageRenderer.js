@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 
 const ImageRenderer = ({ data, metadata, isPreview }) => {
   const canvasRef = useRef(null);
-  const [bands, setBands] = useState({ red: 0, green: 0, blue: 0 });
+  const [bands, setBands] = useState({ red: 1, green: 1, blue: 1 });
   const [spectralData, setSpectralData] = useState(null);
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [cursorPosition, setCursorPosition] = useState(null);
@@ -85,7 +85,9 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     const greenIndex = isPreview ? 1 : bands.green - 1;
     const blueIndex = isPreview ? 2 : bands.blue - 1;
 
-    // band statistics for max profile value
+    console.log(`Rendering bands R:${redIndex + 1}, G:${greenIndex + 1}, B:${blueIndex + 1}`);
+
+    // Calculate band statistics with a more robust approach
     const calculateBandStats = (bandData) => {
       if (!bandData) return { min: 0, max: 65535 };
 
@@ -108,26 +110,43 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       }
 
       values.sort((a, b) => a - b);
+
+      // Remove extreme outliers by using percentiles
       const lowerIndex = Math.floor(values.length * 0.01);
       const upperIndex = Math.floor(values.length * 0.99);
 
-      return {
-        min: values[lowerIndex],
-        max: values[upperIndex]
-      };
+      // Ensure we have a reasonable range - at least 10% of max value
+      const min = values[lowerIndex] || 0;
+      const max = Math.max(values[upperIndex] || 1, min + 1);
+
+      console.log(`Band stats - min: ${min}, max: ${max}, samples: ${values.length}`);
+
+      return { min, max };
     };
 
+    // Calculate stats for each band and ensure they have a reasonable range
     const bandStats = {
       red: calculateBandStats(data[redIndex]),
       green: calculateBandStats(data[greenIndex]),
       blue: calculateBandStats(data[blueIndex])
     };
 
-    // Normalize function with gamma correction
+    // Log the statistics to help debug
+    console.log('Band stats:', bandStats);
+
+    // Normalize function with contrast enhancement
     const normalize = (value, min, max) => {
-      let normalized = (value - min) / (max - min);
+      // Ensure we don't divide by zero
+      const range = max - min;
+      if (range <= 0) return 0;
+
+      // Linear scaling with gamma correction
+      let normalized = (value - min) / range;
       normalized = Math.max(0, Math.min(1, normalized));
-      normalized = Math.pow(normalized, 0.9);
+
+      // Apply gamma correction to enhance contrast
+      normalized = Math.pow(normalized, 0.65);
+
       return Math.floor(normalized * 255);
     };
 
@@ -137,19 +156,35 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       const sample = i % samples;
 
       try {
+        // Get values for each band
         const redValue = data[redIndex][line][sample];
         const greenValue = data[greenIndex][line][sample];
         const blueValue = data[blueIndex][line][sample];
 
-        const normRed = normalize(redValue, bandStats.red.min, bandStats.red.max);
-        const normGreen = normalize(greenValue, bandStats.green.min, bandStats.green.max);
-        const normBlue = normalize(blueValue, bandStats.blue.min, bandStats.blue.max);
+        // Check for data ignore value if specified
+        const ignoreValue = parseFloat(metadata["data ignore value"] || -1);
+        const isIgnored = (redValue === ignoreValue || greenValue === ignoreValue || blueValue === ignoreValue);
 
-        imageData.data[i * 4 + 0] = normRed;
-        imageData.data[i * 4 + 1] = normGreen;
-        imageData.data[i * 4 + 2] = normBlue;
-        imageData.data[i * 4 + 3] = 255;
+        if (isIgnored) {
+          // Use black for ignored values
+          imageData.data[i * 4 + 0] = 0;
+          imageData.data[i * 4 + 1] = 0;
+          imageData.data[i * 4 + 2] = 0;
+          imageData.data[i * 4 + 3] = 255;
+        } else {
+          // Normalize each band separately
+          const normRed = normalize(redValue, bandStats.red.min, bandStats.red.max);
+          const normGreen = normalize(greenValue, bandStats.green.min, bandStats.green.max);
+          const normBlue = normalize(blueValue, bandStats.blue.min, bandStats.blue.max);
+
+          // Apply values to the image data
+          imageData.data[i * 4 + 0] = normRed;
+          imageData.data[i * 4 + 1] = normGreen;
+          imageData.data[i * 4 + 2] = normBlue;
+          imageData.data[i * 4 + 3] = 255;
+        }
       } catch (error) {
+        // Handle any errors by setting pixel to black
         imageData.data[i * 4 + 0] = 0;
         imageData.data[i * 4 + 1] = 0;
         imageData.data[i * 4 + 2] = 0;
@@ -315,8 +350,21 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
 
     // Sort data by wavelength for proper display
     const sortedData = [...spectralData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
-    const maxValue = globalStats.percentile99;
-    const minValue = 0;
+
+    // Calculate actual min/max values from this specific spectrum
+    let spectrumMin = Infinity;
+    let spectrumMax = -Infinity;
+
+    sortedData.forEach(point => {
+      if (point.value < spectrumMin) spectrumMin = point.value;
+      if (point.value > spectrumMax) spectrumMax = point.value;
+    });
+
+    // Add 10% padding to max value and ensure min is at least 0
+    const minValue = Math.max(0, spectrumMin * 0.9);
+    const maxValue = spectrumMax * 1.1;
+
+    console.log('Spectral range:', minValue, 'to', maxValue);
 
     // Calculate band positions for markers
     const bandPositions = {};

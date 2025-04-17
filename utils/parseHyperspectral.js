@@ -95,6 +95,10 @@ export async function parseHDRFile(hdrFile) {
   // Make sure default bands are valid 1-based indices
   defaultBands = defaultBands.map(band => Math.max(1, Math.min(parseInt(metadata.bands, 10), band || 1)));
 
+  // Parse byte order (default to 0 if not specified)
+  const byteOrder = parseInt(metadata["byte order"], 10);
+  const isBigEndian = byteOrder === 1;
+
   // Parse numeric values
   return {
     ...metadata,
@@ -102,12 +106,39 @@ export async function parseHDRFile(hdrFile) {
     lines: parseInt(metadata.lines, 10),
     bands: parseInt(metadata.bands, 10),
     interleave: interleave, // Store the interleave format (bsq, bil, bip)
+    byteOrder: isNaN(byteOrder) ? 0 : byteOrder, // Store the byte order (0=little endian, 1=big endian)
+    isBigEndian: isBigEndian, // Convenience boolean flag
     defaultBands: defaultBands // Store processed default bands
   };
 }
 
+// Helper function to handle endianness when creating typed arrays
+function createEndianAwareTypedArray(buffer, isBigEndian) {
+  if (isBigEndian) {
+    // For big-endian (byte order=1), we need to swap bytes
+    const u8 = new Uint8Array(buffer);
+    const swappedBuffer = new ArrayBuffer(buffer.byteLength);
+    const swappedU8 = new Uint8Array(swappedBuffer);
+
+    // Swap bytes for each 16-bit value
+    for (let i = 0; i < u8.length; i += 2) {
+      if (i + 1 < u8.length) {
+        swappedU8[i] = u8[i + 1];
+        swappedU8[i + 1] = u8[i];
+      } else {
+        swappedU8[i] = u8[i]; // Handle odd byte at the end if it exists
+      }
+    }
+
+    return new Uint16Array(swappedBuffer);
+  } else {
+    // For little-endian (byte order=0), we can use the buffer directly
+    return new Uint16Array(buffer);
+  }
+}
+
 export async function parseRGBPreview(dataFile, metadata, rgbBands) {
-  const { samples, lines, bands, interleave } = metadata;
+  const { samples, lines, bands, interleave, isBigEndian } = metadata;
   const buffer = await dataFile.arrayBuffer();
   const totalPixels = samples * lines;
 
@@ -119,9 +150,10 @@ export async function parseRGBPreview(dataFile, metadata, rgbBands) {
   });
 
   console.log('Using RGB bands:', validRgbBands);
+  console.log('Byte order:', metadata.byteOrder, 'isBigEndian:', isBigEndian);
 
-  // single Uint16Array view of the entire buffer
-  const rawData = new Uint16Array(buffer);
+  // Create Uint16Array with proper endianness handling
+  const rawData = createEndianAwareTypedArray(buffer, isBigEndian);
 
   // array for just these 3 bands (R, G, B)
   const previewData = new Array(3);
@@ -194,12 +226,12 @@ export async function parseRGBPreview(dataFile, metadata, rgbBands) {
 }
 
 export async function parseFullData(dataFile, metadata, onProgress) {
-  const { samples, lines, bands, interleave } = metadata;
+  const { samples, lines, bands, interleave, isBigEndian } = metadata;
   const buffer = await dataFile.arrayBuffer();
   const totalPixels = samples * lines;
 
-  // Create a single Uint16Array view of the entire buffer
-  const rawData = new Uint16Array(buffer);
+  // Create a Uint16Array view with proper endianness handling
+  const rawData = createEndianAwareTypedArray(buffer, isBigEndian);
 
   // Pre-allocate the entire data structure
   const data = new Array(bands);
