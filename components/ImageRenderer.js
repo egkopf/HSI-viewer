@@ -7,6 +7,11 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [cursorPosition, setCursorPosition] = useState(null);
   const [globalStats, setGlobalStats] = useState({ percentile99: 5000 });
+  const [normalizationSettings, setNormalizationSettings] = useState({
+    lowerPercentile: 0.01, // Default 1st percentile
+    upperPercentile: 0.99, // Default 99th percentile
+    gamma: 0.65 // Default gamma value
+  });
 
   // Initialize bands from metadata
   useEffect(() => {
@@ -87,20 +92,25 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
 
     console.log(`Rendering bands R:${redIndex + 1}, G:${greenIndex + 1}, B:${blueIndex + 1}`);
 
-    // Calculate band statistics with a more robust approach
+    // Calculate band statistics with a more robust approach that uses user-defined percentiles
     const calculateBandStats = (bandData) => {
       if (!bandData) return { min: 0, max: 65535 };
 
       // Sample values for performance
       const values = [];
-      const sampleRate = 0.1; // 10% sampling
+      const sampleRate = 0.2; // Increased from 0.1 to 0.2 for better statistics
+      const ignoreValue = parseFloat(metadata["data ignore value"] || -1);
 
       for (let line = 0; line < lines; line++) {
         if (Math.random() > sampleRate) continue;
         for (let sample = 0; sample < samples; sample++) {
           if (Math.random() > sampleRate) continue;
           if (bandData[line] && bandData[line][sample] !== undefined) {
-            values.push(bandData[line][sample]);
+            const value = bandData[line][sample];
+            // Skip data ignore values
+            if (value !== ignoreValue) {
+              values.push(value);
+            }
           }
         }
       }
@@ -111,9 +121,9 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
 
       values.sort((a, b) => a - b);
 
-      // Remove extreme outliers by using percentiles
-      const lowerIndex = Math.floor(values.length * 0.01);
-      const upperIndex = Math.floor(values.length * 0.99);
+      // Use user-controlled percentiles
+      const lowerIndex = Math.floor(values.length * normalizationSettings.lowerPercentile);
+      const upperIndex = Math.floor(values.length * normalizationSettings.upperPercentile);
 
       // Ensure we have a reasonable range - at least 10% of max value
       const min = values[lowerIndex] || 0;
@@ -134,18 +144,18 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     // Log the statistics to help debug
     console.log('Band stats:', bandStats);
 
-    // Normalize function with contrast enhancement
+    // Normalize function with user-controlled gamma correction
     const normalize = (value, min, max) => {
       // Ensure we don't divide by zero
       const range = max - min;
       if (range <= 0) return 0;
 
-      // Linear scaling with gamma correction
+      // Linear scaling
       let normalized = (value - min) / range;
       normalized = Math.max(0, Math.min(1, normalized));
 
-      // Apply gamma correction to enhance contrast
-      normalized = Math.pow(normalized, 0.65);
+      // Apply gamma correction with user-controlled gamma to enhance contrast
+      normalized = Math.pow(normalized, normalizationSettings.gamma);
 
       return Math.floor(normalized * 255);
     };
@@ -193,7 +203,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     }
 
     ctx.putImageData(imageData, 0, 0);
-  }, [data, metadata, isPreview, bands, globalStats]);
+  }, [data, metadata, isPreview, bands, globalStats, normalizationSettings]);
 
   // Pixel click
   const handlePixelClick = useCallback((event) => {
@@ -341,6 +351,70 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     }
     return `${Math.round(wavelength)} nm`;
   }, []);
+
+  // Normalization Controls component
+  const NormalizationControls = () => (
+    <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+      <h4 className="font-semibold mb-2">Image Enhancement Controls</h4>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Lower Cutoff ({Math.round(normalizationSettings.lowerPercentile * 100)}%)
+          </label>
+          <input
+            type="range"
+            min="0"
+            max="10"
+            step="0.5"
+            value={normalizationSettings.lowerPercentile * 100}
+            onChange={(e) => setNormalizationSettings({
+              ...normalizationSettings,
+              lowerPercentile: Number(e.target.value) / 100
+            })}
+            className="w-full"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Upper Cutoff ({Math.round(normalizationSettings.upperPercentile * 100)}%)
+          </label>
+          <input
+            type="range"
+            min="90"
+            max="100"
+            step="0.5"
+            value={normalizationSettings.upperPercentile * 100}
+            onChange={(e) => setNormalizationSettings({
+              ...normalizationSettings,
+              upperPercentile: Number(e.target.value) / 100
+            })}
+            className="w-full"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Gamma ({normalizationSettings.gamma.toFixed(2)})
+          </label>
+          <input
+            type="range"
+            min="0.2"
+            max="2.0"
+            step="0.05"
+            value={normalizationSettings.gamma}
+            onChange={(e) => setNormalizationSettings({
+              ...normalizationSettings,
+              gamma: Number(e.target.value)
+            })}
+            className="w-full"
+          />
+        </div>
+      </div>
+
+
+    </div>
+  );
 
   // Memoized spectral graph rendering
   const spectralGraph = useMemo(() => {
@@ -543,62 +617,69 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
 
   return (
     <div className="relative">
-      <canvas ref={canvasRef} style={{ cursor: 'crosshair' }} />
-
       {!isPreview && (
-        <div className="mt-4">
-          <form onSubmit={handleSubmit} className="flex gap-4">
-            <div className="flex items-center">
-              <label className="mr-2 font-medium text-red-600">R:</label>
-              <input
-                type="number"
-                name="red"
-                className="border rounded px-2 py-1 w-16"
-                defaultValue={bands.red}
-                min="1"
-                max={metadata?.bands || 100}
-              />
-              <span className="ml-2 text-sm text-red-600">
-                {formatWavelength(getWavelengthForBand(bands.red))}
-              </span>
-            </div>
-            <div className="flex items-center">
-              <label className="mr-2 font-medium text-green-600">G:</label>
-              <input
-                type="number"
-                name="green"
-                className="border rounded px-2 py-1 w-16"
-                defaultValue={bands.green}
-                min="1"
-                max={metadata?.bands || 100}
-              />
-              <span className="ml-2 text-sm text-green-600">
-                {formatWavelength(getWavelengthForBand(bands.green))}
-              </span>
-            </div>
-            <div className="flex items-center">
-              <label className="mr-2 font-medium text-blue-600">B:</label>
-              <input
-                type="number"
-                name="blue"
-                className="border rounded px-2 py-1 w-16"
-                defaultValue={bands.blue}
-                min="1"
-                max={metadata?.bands || 100}
-              />
-              <span className="ml-2 text-sm text-blue-600">
-                {formatWavelength(getWavelengthForBand(bands.blue))}
-              </span>
-            </div>
-            <button
-              type="submit"
-              className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded"
-            >
-              Update
-            </button>
-          </form>
-        </div>
+        <>
+          {/* Band Selection Controls */}
+          <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+            <h4 className="font-semibold mb-2">Band Selection</h4>
+            <form onSubmit={handleSubmit} className="flex gap-4">
+              <div className="flex items-center">
+                <label className="mr-2 font-medium text-red-600">R:</label>
+                <input
+                  type="number"
+                  name="red"
+                  className="border rounded px-2 py-1 w-16"
+                  defaultValue={bands.red}
+                  min="1"
+                  max={metadata?.bands || 100}
+                />
+                <span className="ml-2 text-sm text-red-600">
+                  {formatWavelength(getWavelengthForBand(bands.red))}
+                </span>
+              </div>
+              <div className="flex items-center">
+                <label className="mr-2 font-medium text-green-600">G:</label>
+                <input
+                  type="number"
+                  name="green"
+                  className="border rounded px-2 py-1 w-16"
+                  defaultValue={bands.green}
+                  min="1"
+                  max={metadata?.bands || 100}
+                />
+                <span className="ml-2 text-sm text-green-600">
+                  {formatWavelength(getWavelengthForBand(bands.green))}
+                </span>
+              </div>
+              <div className="flex items-center">
+                <label className="mr-2 font-medium text-blue-600">B:</label>
+                <input
+                  type="number"
+                  name="blue"
+                  className="border rounded px-2 py-1 w-16"
+                  defaultValue={bands.blue}
+                  min="1"
+                  max={metadata?.bands || 100}
+                />
+                <span className="ml-2 text-sm text-blue-600">
+                  {formatWavelength(getWavelengthForBand(bands.blue))}
+                </span>
+              </div>
+              <button
+                type="submit"
+                className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded"
+              >
+                Update
+              </button>
+            </form>
+          </div>
+
+          {/* Normalization controls */}
+          <NormalizationControls />
+        </>
       )}
+
+      <canvas ref={canvasRef} style={{ cursor: 'crosshair' }} />
 
       {/* Spectral graph popup */}
       {spectralGraph}
