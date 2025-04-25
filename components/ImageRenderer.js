@@ -1,9 +1,53 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 
+const ExportButton = ({ svgRef, fileName = "spectral-profile" }) => {
+  const handleExport = () => {
+    if (!svgRef.current) return;
+    // Get the SVG element
+    const svgElement = svgRef.current;
+
+    // Create a clone of the SVG with proper namespaces for export
+    const svgClone = svgElement.cloneNode(true);
+    svgClone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+
+    // Create a well-formed SVG with appropriate dimensions
+    const svgData = new XMLSerializer().serializeToString(svgClone);
+
+    // Create a Blob from the SVG data
+    const blob = new Blob([svgData], { type: "image/svg+xml" });
+
+    // Create a download link
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${fileName}.svg`;
+    document.body.appendChild(link);
+    link.click();
+
+    // Clean up
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      document.body.removeChild(link);
+    }, 100);
+  };
+  // return (
+  //   <button
+  //     className="text-red-500 hover:text-red-700 mx-2"
+  //     onClick={handleExport}
+  //   >
+  //     Export SVG
+  //   </button>
+  // );
+};
+
 const ImageRenderer = ({ data, metadata, isPreview }) => {
   const canvasRef = useRef(null);
+  const svgRef = useRef(null);
   const [bands, setBands] = useState({ red: 1, green: 1, blue: 1 });
-  const [spectralData, setSpectralData] = useState(null);
+
+  const [spectralDataArray, setSpectralDataArray] = useState([]);
+  const [showSpectralGraph, setShowSpectralGraph] = useState(false);
+
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [cursorPosition, setCursorPosition] = useState(null);
   const [globalStats, setGlobalStats] = useState({ percentile99: 5000 });
@@ -33,7 +77,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
         const bands = data.length;
         const samples = metadata.samples;
         const lines = metadata.lines;
-        const ignoreValue = parseFloat(metadata["data ignore value"] || 15000.0);
+        const ignoreValue = parseFloat(metadata["data ignore value"] || 0.0);
         const samplingRate = 0.05;
 
         // Sample bands and pixels for performance
@@ -145,20 +189,25 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     console.log('Band stats:', bandStats);
 
     // Normalize function with user-controlled gamma correction
-    const normalize = (value, min, max) => {
-      // Ensure we don't divide by zero
+    const normalize = (value, min, max, sample, line, samples, lines) => {
+      // Check if this is an edge pixel
+      const isEdgePixel = (sample === 0 || sample === samples - 1 ||
+        line === 0 || line === lines - 1);
+
+      // If it's an edge pixel, return 0
+      if (isEdgePixel) return 0;
+
+      // Otherwise, proceed with normal normalization
       const range = max - min;
       if (range <= 0) return 0;
 
-      // Linear scaling
       let normalized = (value - min) / range;
       normalized = Math.max(0, Math.min(1, normalized));
-
-      // Apply gamma correction with user-controlled gamma to enhance contrast
       normalized = Math.pow(normalized, normalizationSettings.gamma);
 
       return Math.floor(normalized * 255);
     };
+
 
     // Process each pixel in a single loop
     for (let i = 0; i < samples * lines; i++) {
@@ -219,7 +268,6 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
 
     // Bounds check
     if (x < 0 || x >= metadata.samples || y < 0 || y >= metadata.lines) {
-      setSpectralData(null);
       return;
     }
 
@@ -242,12 +290,18 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
         }
       }
 
-      setSpectralData({
+      // Generate a random color for this new spectrum
+      const randomColor = `rgb(${Math.floor(Math.random() * 200)}, ${Math.floor(Math.random() * 200)}, ${Math.floor(Math.random() * 200)})`;
+
+      const newSpectralData = {
         spectrum: pixelSpectrum,
         position: { x, y },
-        clientX: event.clientX,
-        clientY: event.clientY
-      });
+        color: randomColor
+      };
+
+      // Add to the array instead of replacing
+      setSpectralDataArray(prevArray => [...prevArray, newSpectralData]);
+      setShowSpectralGraph(true);
     }
   }, [data, metadata, isPreview]);
 
@@ -263,16 +317,17 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     };
   }, [handlePixelClick]);
 
-  // Close spectral graph when clicking outside
+  // clicking outside the graph
   useEffect(() => {
-    if (!spectralData) return;
+    if (!showSpectralGraph) return;
 
     const handleOutsideClick = (event) => {
       const isClickOnGraph = event.target.closest('.spectral-graph');
       const isClickOnCanvas = event.target.closest('canvas');
 
       if (!isClickOnGraph && !isClickOnCanvas) {
-        setSpectralData(null);
+        // Now we close the graph but don't clear the data
+        setShowSpectralGraph(false);
       }
     };
 
@@ -281,7 +336,12 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     return () => {
       document.removeEventListener('click', handleOutsideClick);
     };
-  }, [spectralData]);
+  }, [showSpectralGraph]);
+
+  const clearAllSpectra = () => {
+    setSpectralDataArray([]);
+    setShowSpectralGraph(false);
+  };
 
   // Handle form submission for band selection
   const handleSubmit = (e) => {
@@ -307,31 +367,23 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
 
   // Calculate spectral graph popup position
   const calculatePopupPosition = useCallback(() => {
-    if (!spectralData) return {};
+    if (!spectralDataArray) return {};
 
-    let left = spectralData.clientX + 20;
-    let top = spectralData.clientY - 20;
+    // Fixed position in the bottom left
     const graphWidth = 320;
     const graphHeight = 240;
 
-    // Check boundaries
-    if (left + graphWidth > window.innerWidth) {
-      left = spectralData.clientX - graphWidth - 20;
-    }
-
-    if (top + graphHeight > window.innerHeight) {
-      top = spectralData.clientY - graphHeight - 20;
-    }
-
-    if (top < 10) top = 10;
+    // Add some padding from the edges
+    const left = 20;
+    const top = window.innerHeight - graphHeight - 130;
 
     return {
       position: 'fixed',
-      left: `${left}px`,
-      top: `${top}px`,
+      left: left + 'px',
+      top: top + 'px',
       zIndex: 1000
     };
-  }, [spectralData]);
+  }, [spectralDataArray]); // Keep the spectralData dependency for consistency
 
   // Helper to get wavelength for a band
   const getWavelengthForBand = useCallback((bandNumber) => {
@@ -415,30 +467,28 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
 
     </div>
   );
-
   // Memoized spectral graph rendering
   const spectralGraph = useMemo(() => {
-    if (!spectralData || !spectralData.spectrum || spectralData.spectrum.length === 0) {
+    if (!showSpectralGraph || spectralDataArray.length === 0) {
       return null;
     }
 
-    // Sort data by wavelength for proper display
-    const sortedData = [...spectralData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
-
-    // Calculate actual min/max values from this specific spectrum
+    // Calculate overall min/max values from all spectra
     let spectrumMin = Infinity;
     let spectrumMax = -Infinity;
 
-    sortedData.forEach(point => {
-      if (point.value < spectrumMin) spectrumMin = point.value;
-      if (point.value > spectrumMax) spectrumMax = point.value;
+    spectralDataArray.forEach(data => {
+      if (!data.spectrum) return;
+
+      data.spectrum.forEach(point => {
+        if (point.value < spectrumMin) spectrumMin = point.value;
+        if (point.value > spectrumMax) spectrumMax = point.value;
+      });
     });
 
     // Add 10% padding to max value and ensure min is at least 0
     const minValue = Math.max(0, spectrumMin * 0.9);
     const maxValue = spectrumMax * 1.1;
-
-    console.log('Spectral range:', minValue, 'to', maxValue);
 
     // Calculate band positions for markers
     const bandPositions = {};
@@ -465,55 +515,51 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     const graphWidth = chartWidth - (paddingX * 2);
     const graphHeight = chartHeight - (paddingY * 2);
 
-    // Generate points for line
-    const points = sortedData.map((point, index) => {
-      const x = paddingX + (index / (sortedData.length - 1)) * graphWidth;
-      const y = paddingY + graphHeight - ((point.value - minValue) / (maxValue - minValue) * graphHeight);
-      return `${x},${y}`;
-    }).join(' ');
-
-    // X-axis tick values
-    const xTickCount = Math.min(9, sortedData.length);
+    // X-axis tick values based on the first spectrum (they all have same bands)
+    const firstSpectrum = spectralDataArray[0]?.spectrum || [];
+    const xTickCount = Math.min(9, firstSpectrum.length);
     const xTicks = [];
 
-    const wavelengthValues = sortedData.map(d => d.wavelength);
-    const minWavelength = Math.min(...wavelengthValues);
-    const maxWavelength = Math.max(...wavelengthValues);
+    if (firstSpectrum.length > 0) {
+      const wavelengthValues = firstSpectrum.map(d => d.wavelength);
+      const minWavelength = Math.min(...wavelengthValues);
+      const maxWavelength = Math.max(...wavelengthValues);
+      const hasRealWavelengthData = maxWavelength < 10; // Quick check for μm wavelength units
 
-    const hasRealWavelengthData = maxWavelength < 10; // Quick check for μm wavelength units
+      if (hasRealWavelengthData) {
+        // Create evenly spaced ticks from min to max
+        for (let i = 0; i < xTickCount; i++) {
+          const wavelengthValue = minWavelength + (i / (xTickCount - 1)) * (maxWavelength - minWavelength);
+          const xPosition = paddingX + (i / (xTickCount - 1)) * graphWidth;
 
-    if (hasRealWavelengthData) {
-      // Create evenly spaced ticks from min to max
-      for (let i = 0; i < xTickCount; i++) {
-        const wavelengthValue = minWavelength + (i / (xTickCount - 1)) * (maxWavelength - minWavelength);
-        const xPosition = paddingX + (i / (xTickCount - 1)) * graphWidth;
+          xTicks.push({
+            x: xPosition,
+            value: wavelengthValue.toFixed(2)
+          });
+        }
+      } else {
+        // Fallback to band-based ticks
+        for (let i = 0; i < xTickCount; i++) {
+          const bandNum = Math.floor(1 + i * (firstSpectrum.length - 1) / (xTickCount - 1));
+          const xPosition = paddingX + (i / (xTickCount - 1)) * graphWidth;
 
-        xTicks.push({
-          x: xPosition,
-          value: wavelengthValue.toFixed(2)
-        });
-      }
-    } else {
-      // Fallback to band-based ticks
-      for (let i = 0; i < xTickCount; i++) {
-        const bandNum = Math.floor(1 + i * (sortedData.length - 1) / (xTickCount - 1));
-        const xPosition = paddingX + (i / (xTickCount - 1)) * graphWidth;
-
-        xTicks.push({
-          x: xPosition,
-          value: bandNum
-        });
+          xTicks.push({
+            x: xPosition,
+            value: bandNum
+          });
+        }
       }
     }
 
-    const xAxisLabel = hasRealWavelengthData ? "Wavelength (μm)" : "Band";
+    const xAxisLabel = firstSpectrum.length > 0 &&
+      Math.max(...firstSpectrum.map(d => d.wavelength)) < 10 ? "Wavelength (μm)" : "Band";
 
     // Y-axis tick values
     const yTickCount = 5;
     const yTicks = [];
 
     for (let i = 0; i < yTickCount; i++) {
-      const value = minValue + (i / (yTickCount - 1)) * (maxValue - minValue);
+      const value = 0 + (i / (yTickCount - 1)) * (maxValue - minValue);
       const y = paddingY + graphHeight - (i / (yTickCount - 1)) * graphHeight;
 
       yTicks.push({
@@ -522,6 +568,17 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       });
     }
 
+    // Function to remove a specific spectrum
+    const removeSpectrum = (index) => {
+
+      const newArray = [...spectralDataArray];
+
+      newArray.splice(index, 1);
+
+      setSpectralDataArray(newArray);
+
+    };
+
     const handleMouseMove = (e) => {
       const svgRect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - svgRect.left;
@@ -529,35 +586,95 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       if (x >= paddingX && x <= paddingX + graphWidth) {
         setCursorPosition(x);
 
+        // Find datapoints across all spectra at this position
         const relativeX = (x - paddingX) / graphWidth;
-        const dataIndex = Math.floor(relativeX * (sortedData.length - 1));
 
-        if (dataIndex >= 0 && dataIndex < sortedData.length) {
-          setHoveredPoint({
-            value: sortedData[dataIndex].value,
-            wavelength: sortedData[dataIndex].wavelength,
-            x: paddingX + (dataIndex / (sortedData.length - 1)) * graphWidth,
-            y: paddingY + graphHeight - ((sortedData[dataIndex].value - minValue) / (maxValue - minValue) * graphHeight)
-          });
-        }
+        // Find which dataset's point to highlight
+        spectralDataArray.forEach((specData, specIndex) => {
+          if (!specData.spectrum) return;
+
+          const sortedData = [...specData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
+          const dataIndex = Math.floor(relativeX * (sortedData.length - 1));
+
+          if (dataIndex >= 0 && dataIndex < sortedData.length) {
+            const value = sortedData[dataIndex].value;
+            const wavelength = sortedData[dataIndex].wavelength;
+            const xPos = paddingX + (dataIndex / (sortedData.length - 1)) * graphWidth;
+            const yPos = paddingY + graphHeight - ((value - minValue) / (maxValue - minValue) * graphHeight);
+
+            // Update hover data for this spectrum
+            specData.hoverPoint = {
+              value,
+              wavelength,
+              x: xPos,
+              y: yPos
+            };
+          }
+        });
+
+        // Force re-render by updating a state variable
+        setHoveredPoint({ x, values: spectralDataArray.map(d => d.hoverPoint) });
       }
     };
 
     const handleMouseLeave = () => {
       setCursorPosition(null);
       setHoveredPoint(null);
+
+      // Clear all hover points
+      spectralDataArray.forEach(specData => {
+        specData.hoverPoint = null;
+      });
     };
 
     return (
       <div className="spectral-graph fixed bg-white border border-gray-300 shadow-lg p-4" style={calculatePopupPosition()}>
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-semibold">
-            Spectral Profile of Pixel ({spectralData.position.x}, {spectralData.position.y})
+            Spectral Profiles ({spectralDataArray.length} pixels)
           </h3>
-          <button className="text-gray-500 hover:text-gray-700" onClick={() => setSpectralData(null)}>×</button>
+          <div>
+            <ExportButton svgRef={svgRef} fileName={`spectral-profile-${new Date().toISOString().slice(0, 10)}`} />
+            <button
+              className="text-red-500 hover:text-red-700 mx-2"
+              onClick={clearAllSpectra}
+            >
+              Clear All
+            </button>
+            <button
+              className="text-gray-500 hover:text-gray-700"
+              onClick={() => setShowSpectralGraph(false)}
+            >
+              ×
+            </button>
+          </div>
         </div>
+        <svg ref={svgRef} width={chartWidth} height={chartHeight} className="bg-gray-50" onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave}>
+          {/* Grid lines */}
+          {yTicks.map((tick, i) => (
+            <line
+              key={`y-grid-${i}`}
+              x1={paddingX}
+              y1={tick.y}
+              x2={paddingX + graphWidth}
+              y2={tick.y}
+              stroke="#ddd"
+              strokeWidth="1"
+            />
+          ))}
 
-        <svg width={chartWidth} height={chartHeight} className="bg-gray-50" onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave}>
+          {xTicks.map((tick, i) => (
+            <line
+              key={`x-grid-${i}`}
+              x1={tick.x}
+              y1={paddingY}
+              x2={tick.x}
+              y2={paddingY + graphHeight}
+              stroke="#ddd"
+              strokeWidth="1"
+            />
+          ))}
+
           {/* X axis line */}
           <line x1={paddingX} y1={paddingY + graphHeight} x2={paddingX + graphWidth} y2={paddingY + graphHeight} stroke="#333" strokeWidth="1" />
 
@@ -580,8 +697,38 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
             </React.Fragment>
           ))}
 
-          {/* Data line */}
-          <polyline points={points} fill="none" stroke="#0040a6" strokeWidth="2" />
+          {/* Data lines for each spectrum */}
+          {spectralDataArray.map((specData, specIndex) => {
+            if (!specData.spectrum || specData.spectrum.length === 0) return null;
+
+            // Sort by wavelength for proper display
+            const sortedData = [...specData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
+
+            // Generate points for line
+            const points = sortedData.map((point, index) => {
+              const x = paddingX + (index / (sortedData.length - 1)) * graphWidth;
+              const y = paddingY + graphHeight - ((point.value - minValue) / (maxValue - minValue) * graphHeight);
+              return `${x},${y}`;
+            }).join(' ');
+
+            return (
+              <React.Fragment key={`spectrum-${specIndex}`}>
+                <polyline points={points} fill="none" stroke={specData.color} strokeWidth="2" />
+
+                {/* Hover point for this spectrum */}
+                {specData.hoverPoint && (
+                  <circle
+                    cx={specData.hoverPoint.x}
+                    cy={specData.hoverPoint.y}
+                    r="3"
+                    fill={specData.color}
+                    stroke="#fff"
+                    strokeWidth="1"
+                  />
+                )}
+              </React.Fragment>
+            );
+          })}
 
           {/* RGB band markers */}
           <line x1={paddingX + (bandPositions.red * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.red * graphWidth)}
@@ -593,17 +740,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
 
           {/* Cursor examine line */}
           {cursorPosition && (
-            <line x1={cursorPosition} y1={paddingY} x2={cursorPosition} y2={paddingY + graphHeight} stroke="#FF0000" strokeWidth="1" />
-          )}
-
-          {/* Hover point display */}
-          {hoveredPoint && (
-            <>
-              <circle cx={hoveredPoint.x} cy={hoveredPoint.y} r="2" fill="#0040a6" />
-              <text x={hoveredPoint.x + 18} y={hoveredPoint.y - 8} fontSize="12" fill="#0040a6" textAnchor="middle">
-                {Math.round(hoveredPoint.value)}
-              </text>
-            </>
+            <line x1={cursorPosition} y1={paddingY} x2={cursorPosition} y2={paddingY + graphHeight} stroke="#999" strokeWidth="1" strokeDasharray="2,2" />
           )}
 
           {/* Axis labels */}
@@ -611,9 +748,33 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
           <text x={15} y={paddingY + (graphHeight / 2)} fontSize="10" textAnchor="middle"
             transform={`rotate(-90, 15, ${paddingY + (graphHeight / 2)})`}>Digital Number (DN)</text>
         </svg>
+
+        {/* Legend area with remove buttons */}
+        <div className="mt-2 max-h-20 overflow-y-auto">
+          {spectralDataArray.map((specData, index) => (
+            <div key={`legend-${index}`} className="flex items-center justify-between text-xs mb-1">
+              <div className="flex items-center">
+                <div
+                  className="w-3 h-3 mr-1"
+                  style={{ backgroundColor: specData.color }}
+                ></div>
+                <span>
+                  Pixel ({specData.position.x}, {specData.position.y})
+                  {specData.hoverPoint && ` - ${Math.round(specData.hoverPoint.value)}`}
+                </span>
+              </div>
+              <button
+                className="text-gray-500 hover:text-red-500 ml-2"
+                onClick={() => removeSpectrum(index)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
     );
-  }, [spectralData, metadata, bands, globalStats, hoveredPoint, cursorPosition, calculatePopupPosition]);
+  }, [spectralDataArray, showSpectralGraph, metadata, bands, globalStats, calculatePopupPosition, hoveredPoint, cursorPosition]);
 
   return (
     <div className="relative">

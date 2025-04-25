@@ -324,9 +324,3 @@ export async function parseFullData(dataFile, metadata, onProgress) {
 
   return data;
 }
-
-// Legacy function name to maintain backward compatibility
-export async function parseFullBSQ(dataFile, metadata, onProgress) {
-  console.log('Using parseFullData function with interleave format:', metadata.interleave || 'bsq');
-  return parseFullData(dataFile, metadata, onProgress);
-}
