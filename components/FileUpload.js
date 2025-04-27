@@ -57,7 +57,7 @@ const FileUpload = ({ onPreviewReady, onFullDataReady }) => {
       // Get default RGB bands or use fallback values
       const defaultBands = metadata["default bands"]
         ? metadata["default bands"].replace(/[{}]/g, '').split(',').map(Number)
-        : [60, 40, 20]; // Fallback RGB bands if not specified
+        : [29, 19, 9]; // Fallback AVIRIS RGB bands if not specified
 
       // Quick parse of just the RGB bands
       console.log('Processing RGB preview...');

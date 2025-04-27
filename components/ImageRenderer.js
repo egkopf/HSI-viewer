@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 const ImageRenderer = ({ data, metadata, isPreview }) => {
   const canvasRef = useRef(null);
   const svgRef = useRef(null);
-  const [bands, setBands] = useState({ red: 1, green: 1, blue: 1 });
+  const [bands, setBands] = useState({ red: 29, green: 19, blue: 9 }); // AVIRIS default
 
   const [spectralDataArray, setSpectralDataArray] = useState([]);
   const [showSpectralGraph, setShowSpectralGraph] = useState(false);
@@ -11,6 +11,8 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [cursorPosition, setCursorPosition] = useState(null);
   const [globalStats, setGlobalStats] = useState({ percentile99: 5000 });
+
+  // Image enhancement control settings
   const [normalizationSettings, setNormalizationSettings] = useState({
     lowerPercentile: 0.01, // Default 1st percentile
     upperPercentile: 0.99, // Default 99th percentile
@@ -50,7 +52,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
               if (Math.random() > samplingRate) continue;
 
               const value = data[band][line][sample];
-              if (value !== undefined && value !== ignoreValue && value < 65000 && value >= 0) {
+              if (value !== undefined && value !== ignoreValue && value < 55536 && value >= 0) {
                 allValues.push(value);
               }
             }
@@ -102,7 +104,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
 
       // Sample values for performance
       const values = [];
-      const sampleRate = 0.2; // Increased from 0.1 to 0.2 for better statistics
+      const sampleRate = 0.2;
       const ignoreValue = parseFloat(metadata["data ignore value"] || -1);
 
       for (let line = 0; line < lines; line++) {
@@ -111,8 +113,9 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
           if (Math.random() > sampleRate) continue;
           if (bandData[line] && bandData[line][sample] !== undefined) {
             const value = bandData[line][sample];
+
             // Skip data ignore values
-            if (value !== ignoreValue && value < 65000 && value >= 0) {
+            if (value !== ignoreValue && value < 55536 && value >= 0) {
               values.push(value);
             }
           }
@@ -155,7 +158,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
         line === 0 || line === lines - 1);
 
       // Check for extreme values that likely represent no data
-      const isNoDataValue = (value > 65000 || value < 0);
+      const isNoDataValue = (value > 55536 || value < 1);
 
       // If it's an edge pixel or a no-data value, return 0
       if (isEdgePixel || isNoDataValue) return 0;
@@ -245,7 +248,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
           const value = data[band][y][x];
 
           // Skip extreme values that likely represent no data
-          if (value >= 65000 || value < 0) {
+          if (value >= 55536 || value < 1) {
             // Either skip this band or set value to 0
             const fixedValue = 0; // Set to 0 instead of skipping
             const wavelength = wavelengthData[band] || band + 1;
@@ -513,7 +516,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
 
           xTicks.push({
             x: xPosition,
-            value: integerValue
+            value: integerValue >= 10 ? integerValue : wavelengthValue.toFixed(2)
           });
         }
       } else {
@@ -530,9 +533,12 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       }
     }
 
+    console.log(firstSpectrum[0].wavelength);
+
     const xAxisLabel = firstSpectrum.length > 0 &&
       firstSpectrum[0].wavelength !== undefined ?
-      "Wavelength (nm)" : "Band";
+      firstSpectrum[0].wavelength < 3.0 ? "Wavelength (µm)" : "Wavelength (nm)" // assumed to be µm if <3
+      : "Band";
 
     // Y-axis tick values
     const yTickCount = 5;
