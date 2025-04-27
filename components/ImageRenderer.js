@@ -1,45 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 
-const ExportButton = ({ svgRef, fileName = "spectral-profile" }) => {
-  const handleExport = () => {
-    if (!svgRef.current) return;
-    // Get the SVG element
-    const svgElement = svgRef.current;
-
-    // Create a clone of the SVG with proper namespaces for export
-    const svgClone = svgElement.cloneNode(true);
-    svgClone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-
-    // Create a well-formed SVG with appropriate dimensions
-    const svgData = new XMLSerializer().serializeToString(svgClone);
-
-    // Create a Blob from the SVG data
-    const blob = new Blob([svgData], { type: "image/svg+xml" });
-
-    // Create a download link
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${fileName}.svg`;
-    document.body.appendChild(link);
-    link.click();
-
-    // Clean up
-    setTimeout(() => {
-      URL.revokeObjectURL(url);
-      document.body.removeChild(link);
-    }, 100);
-  };
-  // return (
-  //   <button
-  //     className="text-red-500 hover:text-red-700 mx-2"
-  //     onClick={handleExport}
-  //   >
-  //     Export SVG
-  //   </button>
-  // );
-};
-
 const ImageRenderer = ({ data, metadata, isPreview }) => {
   const canvasRef = useRef(null);
   const svgRef = useRef(null);
@@ -90,7 +50,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
               if (Math.random() > samplingRate) continue;
 
               const value = data[band][line][sample];
-              if (value !== undefined && value !== ignoreValue) {
+              if (value !== undefined && value !== ignoreValue && value < 65000 && value >= 0) {
                 allValues.push(value);
               }
             }
@@ -152,7 +112,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
           if (bandData[line] && bandData[line][sample] !== undefined) {
             const value = bandData[line][sample];
             // Skip data ignore values
-            if (value !== ignoreValue) {
+            if (value !== ignoreValue && value < 65000 && value >= 0) {
               values.push(value);
             }
           }
@@ -194,8 +154,11 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       const isEdgePixel = (sample === 0 || sample === samples - 1 ||
         line === 0 || line === lines - 1);
 
-      // If it's an edge pixel, return 0
-      if (isEdgePixel) return 0;
+      // Check for extreme values that likely represent no data
+      const isNoDataValue = (value > 65000 || value < 0);
+
+      // If it's an edge pixel or a no-data value, return 0
+      if (isEdgePixel || isNoDataValue) return 0;
 
       // Otherwise, proceed with normal normalization
       const range = max - min;
@@ -280,13 +243,27 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       for (let band = 0; band < metadata.bands; band++) {
         if (data[band] && data[band][y] && data[band][y][x] !== undefined) {
           const value = data[band][y][x];
-          const wavelength = wavelengthData[band] || band + 1;
 
-          pixelSpectrum.push({
-            band: band + 1,
-            wavelength,
-            value
-          });
+          // Skip extreme values that likely represent no data
+          if (value >= 65000 || value < 0) {
+            // Either skip this band or set value to 0
+            const fixedValue = 0; // Set to 0 instead of skipping
+            const wavelength = wavelengthData[band] || band + 1;
+
+            pixelSpectrum.push({
+              band: band + 1,
+              wavelength,
+              value: fixedValue
+            });
+          } else {
+            // Normal values
+            const wavelength = wavelengthData[band] || band + 1;
+            pixelSpectrum.push({
+              band: band + 1,
+              wavelength,
+              value
+            });
+          }
         }
       }
 
@@ -524,7 +501,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       const wavelengthValues = firstSpectrum.map(d => d.wavelength);
       const minWavelength = Math.min(...wavelengthValues);
       const maxWavelength = Math.max(...wavelengthValues);
-      const hasRealWavelengthData = maxWavelength < 10; // Quick check for μm wavelength units
+      const hasRealWavelengthData = wavelengthValues.length > 0 && wavelengthValues[0] !== undefined;
 
       if (hasRealWavelengthData) {
         // Create evenly spaced ticks from min to max
@@ -532,9 +509,11 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
           const wavelengthValue = minWavelength + (i / (xTickCount - 1)) * (maxWavelength - minWavelength);
           const xPosition = paddingX + (i / (xTickCount - 1)) * graphWidth;
 
+          const integerValue = Math.round(wavelengthValue);
+
           xTicks.push({
             x: xPosition,
-            value: wavelengthValue.toFixed(2)
+            value: integerValue
           });
         }
       } else {
@@ -552,7 +531,8 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     }
 
     const xAxisLabel = firstSpectrum.length > 0 &&
-      Math.max(...firstSpectrum.map(d => d.wavelength)) < 10 ? "Wavelength (μm)" : "Band";
+      firstSpectrum[0].wavelength !== undefined ?
+      "Wavelength (nm)" : "Band";
 
     // Y-axis tick values
     const yTickCount = 5;
@@ -634,7 +614,6 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
             Spectral Profiles ({spectralDataArray.length} pixels)
           </h3>
           <div>
-            <ExportButton svgRef={svgRef} fileName={`spectral-profile-${new Date().toISOString().slice(0, 10)}`} />
             <button
               className="text-red-500 hover:text-red-700 mx-2"
               onClick={clearAllSpectra}
