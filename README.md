@@ -19,3 +19,9 @@ bun dev
 ```
 
 Then open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+# Sourcing HSI Files
+
+For example files to test the viewer on, visit and download datasets from the HSI-OSE dashboard:
+
+https://hsi.yale.edu/hsi-dashboard
