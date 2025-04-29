@@ -12,11 +12,13 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
   const [cursorPosition, setCursorPosition] = useState(null);
   const [globalStats, setGlobalStats] = useState({ percentile99: 5000 });
 
+  const INTENSITY_LIMIT = 55536
+
   // Image enhancement control settings
   const [normalizationSettings, setNormalizationSettings] = useState({
     lowerPercentile: 0.01, // Default 1st percentile
     upperPercentile: 0.99, // Default 99th percentile
-    gamma: 0.65 // Default gamma value
+    gamma: 1.0 // Default gamma value
   });
 
   // Initialize bands from metadata
@@ -52,7 +54,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
               if (Math.random() > samplingRate) continue;
 
               const value = data[band][line][sample];
-              if (value !== undefined && value !== ignoreValue && value < 55536 && value >= 0) {
+              if (value !== undefined && value !== ignoreValue && value < INTENSITY_LIMIT && value >= 0) {
                 allValues.push(value);
               }
             }
@@ -96,7 +98,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
     const greenIndex = isPreview ? 1 : bands.green - 1;
     const blueIndex = isPreview ? 2 : bands.blue - 1;
 
-    console.log(`Rendering bands R:${redIndex + 1}, G:${greenIndex + 1}, B:${blueIndex + 1}`);
+    if (!isPreview) console.log(`Rendering bands R:${redIndex + 1}, G:${greenIndex + 1}, B:${blueIndex + 1}`);
 
     // Calculate band statistics with a more robust approach that uses user-defined percentiles
     const calculateBandStats = (bandData) => {
@@ -115,7 +117,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
             const value = bandData[line][sample];
 
             // Skip data ignore values
-            if (value !== ignoreValue && value < 55536 && value >= 0) {
+            if (value !== ignoreValue && value < INTENSITY_LIMIT && value >= 0) {
               values.push(value);
             }
           }
@@ -136,7 +138,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       const min = values[lowerIndex] || 0;
       const max = Math.max(values[upperIndex] || 1, min + 1);
 
-      console.log(`Band stats - min: ${min}, max: ${max}, samples: ${values.length}`);
+      if (!isPreview) console.log(`Band stats - min: ${min}, max: ${max}, samples: ${values.length}`);
 
       return { min, max };
     };
@@ -148,8 +150,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       blue: calculateBandStats(data[blueIndex])
     };
 
-    // Log the statistics to help debug
-    console.log('Band stats:', bandStats);
+    if (!isPreview) console.log('Band stats:', bandStats);
 
     // Normalize function with user-controlled gamma correction
     const normalize = (value, min, max, sample, line, samples, lines) => {
@@ -158,7 +159,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
         line === 0 || line === lines - 1);
 
       // Check for extreme values that likely represent no data
-      const isNoDataValue = (value > 55536 || value < 1);
+      const isNoDataValue = (value > INTENSITY_LIMIT || value < 1);
 
       // If it's an edge pixel or a no-data value, return 0
       if (isEdgePixel || isNoDataValue) return 0;
@@ -248,7 +249,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
           const value = data[band][y][x];
 
           // Skip extreme values that likely represent no data
-          if (value >= 55536 || value < 1) {
+          if (value >= INTENSITY_LIMIT || value < 1) {
             // Either skip this band or set value to 0
             const fixedValue = 0; // Set to 0 instead of skipping
             const wavelength = wavelengthData[band] || band + 1;
@@ -533,8 +534,6 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       }
     }
 
-    console.log(firstSpectrum[0].wavelength);
-
     const xAxisLabel = firstSpectrum.length > 0 &&
       firstSpectrum[0].wavelength !== undefined ?
       firstSpectrum[0].wavelength < 3.0 ? "Wavelength (µm)" : "Wavelength (nm)" // assumed to be µm if <3
@@ -617,8 +616,7 @@ const ImageRenderer = ({ data, metadata, isPreview }) => {
       <div className="spectral-graph fixed bg-white border border-gray-300 shadow-lg p-4" style={calculatePopupPosition()}>
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-semibold">
-            Spectral Profiles ({spectralDataArray.length} pixels)
-          </h3>
+            Spectral Profiles ({spectralDataArray.length} {spectralDataArray.length > 1 ? 'pixels' : 'pixel'})          </h3>
           <div>
             <button
               className="text-red-500 hover:text-red-700 mx-2"
