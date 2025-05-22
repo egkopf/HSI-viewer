@@ -3,44 +3,37 @@ import FileUpload from '../components/FileUpload';
 import ImageRenderer from '../components/ImageRenderer';
 
 export default function Home() {
-  const [hdrMetadata, setHdrMetadata] = useState(null);
-  const [previewData, setPreviewData] = useState(null);
-  const [fullData, setFullData] = useState(null);
-  const [isPreview, setIsPreview] = useState(true);
+  const [metadata, setMetadata] = useState(null);
+  const [bandData, setBandData] = useState(null);
+  const [loadedBands, setLoadedBands] = useState(null);
+  const [dataFile, setDataFile] = useState(null);
+  const [fileName, setFileName] = useState(null);
 
-  const handlePreviewReady = ({ fileName, metadata, imageData }) => {
-    console.log('Preview ready for:', fileName);
-    setHdrMetadata(metadata);
-    setPreviewData(imageData);
-    setIsPreview(true);
-  };
-
-  const handleFullDataReady = ({ fileName, metadata, imageData }) => {
-    console.log('Full data ready for:', fileName);
-    setFullData(imageData);
-    setIsPreview(false);
+  const handleDataReady = ({ fileName, dataFile, metadata, bandData, loadedBands }) => {
+    console.log('Data ready for:', fileName);
+    setMetadata(metadata);
+    setBandData(bandData);
+    setLoadedBands(loadedBands);
+    setDataFile(dataFile);
+    setFileName(fileName);
   };
 
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4">Hyperspectral Data Viewer</h1>
 
-      <FileUpload
-        onPreviewReady={handlePreviewReady}
-        onFullDataReady={handleFullDataReady}
-      />
+      <FileUpload onDataReady={handleDataReady} />
 
-      {previewData && hdrMetadata && (
+      {bandData && metadata && (
         <div className="mt-4">
-          {isPreview && (
-            <p className="mb-2 text-blue-600">
-              Quick preview (processing full dataset...)
-            </p>
-          )}
+          <p className="mb-2 text-gray-600">
+            Loaded: {fileName} (Bands: {loadedBands?.join(', ')})
+          </p>
           <ImageRenderer
-            data={isPreview ? previewData : fullData}
-            metadata={hdrMetadata}
-            isPreview={isPreview}
+            bandData={bandData}
+            metadata={metadata}
+            loadedBands={loadedBands}
+            dataFile={dataFile}
           />
         </div>
       )}

@@ -68,7 +68,7 @@ export async function parseHDRFile(hdrFile) {
   // Parse interleave format from metadata
   const interleave = metadata.interleave ? metadata.interleave.toLowerCase() : 'bsq';
 
-  // Set default bands if not specified (many hyperspectral datasets don't include default bands)
+  // Set default bands if not specified
   let defaultBands = [];
   if (metadata["default bands"]) {
     try {
@@ -105,11 +105,17 @@ export async function parseHDRFile(hdrFile) {
     samples: parseInt(metadata.samples, 10),
     lines: parseInt(metadata.lines, 10),
     bands: parseInt(metadata.bands, 10),
-    interleave: interleave, // Store the interleave format (bsq, bil, bip)
-    byteOrder: isNaN(byteOrder) ? 0 : byteOrder, // Store the byte order (0=little endian, 1=big endian)
-    isBigEndian: isBigEndian, // Convenience boolean flag
-    defaultBands: defaultBands // Store processed default bands
+    interleave: interleave,
+    byteOrder: isNaN(byteOrder) ? 0 : byteOrder,
+    isBigEndian: isBigEndian,
+    defaultBands: defaultBands
   };
+}
+
+// Helper function to read specific bytes from a file
+async function readFileBytes(file, start, length) {
+  const slice = file.slice(start, start + length);
+  return await slice.arrayBuffer();
 }
 
 // Helper function to handle endianness when creating typed arrays
@@ -137,190 +143,206 @@ function createEndianAwareTypedArray(buffer, isBigEndian) {
   }
 }
 
-export async function parseRGBPreview(dataFile, metadata, rgbBands) {
-  const { samples, lines, bands, interleave, isBigEndian } = metadata;
-  const buffer = await dataFile.arrayBuffer();
+// Calculate byte offset for a specific band/line/sample
+function calculateOffset(band, line, sample, metadata) {
+  const { samples, lines, bands, interleave } = metadata;
+  const bandIndex = band - 1; // Convert to 0-based indexing
   const totalPixels = samples * lines;
 
-  // Make sure rgbBands are valid and 1-based
-  const validRgbBands = rgbBands.map(band => {
-    // Ensure band is an integer between 1 and the total number of bands
-    const validBand = Math.max(1, Math.min(bands, Math.floor(band) || 1));
-    return validBand;
-  });
-
-  console.log('Using RGB bands:', validRgbBands);
-  console.log('Byte order:', metadata.byteOrder, 'isBigEndian:', isBigEndian);
-
-  // Create Uint16Array with proper endianness handling
-  const rawData = createEndianAwareTypedArray(buffer, isBigEndian);
-
-  // array for just these 3 bands (R, G, B)
-  const previewData = new Array(3);
-
-  // Function to get the correct offset based on interleave format
-  const getOffset = (band, line, sample) => {
-    const bandIndex = band - 1; // Convert to 0-based indexing
-
-    switch (interleave.toLowerCase()) {
-      case 'bil': // Band Interleaved by Line
-        return (line * samples * bands) + (bandIndex * samples) + sample;
-      case 'bip': // Band Interleaved by Pixel
-        return (line * samples * bands) + (sample * bands) + bandIndex;
-      case 'bsq': // Band Sequential (default)
-      default:
-        return (bandIndex * totalPixels) + (line * samples) + sample;
-    }
-  };
-
-  // Load each of the three RGB bands we need
-  for (let i = 0; i < 3; i++) {
-    const bandNumber = validRgbBands[i]; // This is the 1-based band number
-    const bandIndex = i;  // This is the index in preview array (0, 1, or 2)
-
-    // Initialize the 2D array for this band
-    const bandData = new Array(lines);
-
-    // Process each line in the band
-    for (let line = 0; line < lines; line++) {
-      // Create typed array for this line
-      const lineData = new Uint16Array(samples);
-
-      // Use optimized method based on interleave format
-      if (interleave.toLowerCase() === 'bsq') {
-        // For BSQ, we can optimize by reading entire lines at once
-        const bandOffset = (bandNumber - 1) * totalPixels;
-        const lineOffset = bandOffset + (line * samples);
-        lineData.set(rawData.subarray(lineOffset, lineOffset + samples));
-      }
-      else if (interleave.toLowerCase() === 'bil') {
-        // For BIL, we can read entire band segments within each line
-        const lineOffset = (line * samples * bands) + ((bandNumber - 1) * samples);
-        lineData.set(rawData.subarray(lineOffset, lineOffset + samples));
-      }
-      else if (interleave.toLowerCase() === 'bip') {
-        // For BIP, we need to extract each sample individually
-        for (let sample = 0; sample < samples; sample++) {
-          const pixelOffset = (line * samples * bands) + (sample * bands);
-          const bandOffset = pixelOffset + (bandNumber - 1); // -1 to convert to 0-based index
-          lineData[sample] = rawData[bandOffset];
-        }
-      }
-      else {
-        // Fallback for other formats
-        for (let sample = 0; sample < samples; sample++) {
-          const offset = getOffset(bandNumber, line, sample);
-          lineData[sample] = rawData[offset];
-        }
-      }
-
-      // Store the line
-      bandData[line] = lineData;
-    }
-
-    // Store the band in the preview data
-    previewData[bandIndex] = bandData;
+  switch (interleave.toLowerCase()) {
+    case 'bil': // Band Interleaved by Line
+      return ((line * samples * bands) + (bandIndex * samples) + sample) * 2; // *2 for 16-bit
+    case 'bip': // Band Interleaved by Pixel
+      return ((line * samples * bands) + (sample * bands) + bandIndex) * 2;
+    case 'bsq': // Band Sequential (default)
+    default:
+      return ((bandIndex * totalPixels) + (line * samples) + sample) * 2;
   }
-
-  return previewData;
 }
 
-export async function parseFullData(dataFile, metadata, onProgress) {
+// Load only specific bands from the hyperspectral data file using streaming reads
+export async function parseSpecificBands(dataFile, metadata, bandNumbers) {
   const { samples, lines, bands, interleave, isBigEndian } = metadata;
-  const buffer = await dataFile.arrayBuffer();
-  const totalPixels = samples * lines;
 
-  // Create a Uint16Array view with proper endianness handling
-  const rawData = createEndianAwareTypedArray(buffer, isBigEndian);
+  // Validate band numbers
+  const validBandNumbers = bandNumbers.map(band =>
+    Math.max(1, Math.min(bands, Math.floor(band) || 1))
+  );
 
-  // Pre-allocate the entire data structure
-  const data = new Array(bands);
+  console.log('Loading bands:', validBandNumbers);
 
-  // For BIP format, we need a specialized approach
-  if (interleave.toLowerCase() === 'bip') {
-    console.log('Using optimized BIP processing...');
+  // Array for the requested bands
+  const bandData = new Array(validBandNumbers.length);
 
+  // For BSQ format, we can read entire bands efficiently
+  if (interleave.toLowerCase() === 'bsq') {
+    const totalPixels = samples * lines;
+
+    for (let i = 0; i < validBandNumbers.length; i++) {
+      const bandNumber = validBandNumbers[i];
+      const bandIndex = bandNumber - 1;
+
+      // Calculate start position for this band
+      const bandStartByte = bandIndex * totalPixels * 2; // *2 for 16-bit
+      const bandSizeBytes = totalPixels * 2;
+
+      // Read entire band at once
+      const bandBuffer = await readFileBytes(dataFile, bandStartByte, bandSizeBytes);
+      const rawBandData = createEndianAwareTypedArray(bandBuffer, isBigEndian);
+
+      // Convert flat array to 2D array [lines][samples]
+      const band2D = new Array(lines);
+      for (let line = 0; line < lines; line++) {
+        const lineData = new Uint16Array(samples);
+        const lineStartIndex = line * samples;
+        lineData.set(rawBandData.subarray(lineStartIndex, lineStartIndex + samples));
+        band2D[line] = lineData;
+      }
+
+      bandData[i] = band2D;
+    }
+  }
+  // For BIL format, read by lines
+  else if (interleave.toLowerCase() === 'bil') {
     // Initialize all band arrays
-    for (let band = 0; band < bands; band++) {
-      data[band] = new Array(lines);
-      for (let line = 0; line < lines; line++) {
-        data[band][line] = new Uint16Array(samples);
-      }
+    for (let i = 0; i < validBandNumbers.length; i++) {
+      bandData[i] = new Array(lines);
     }
 
-    // Process all pixels
-    let processedCount = 0;
-    const totalCount = lines * samples;
-    const progressSteps = Math.max(10, Math.floor(lines / 100)); // Report progress every ~1%
-
+    // Read data line by line
     for (let line = 0; line < lines; line++) {
-      for (let sample = 0; sample < samples; sample++) {
-        // Calculate the starting position of this pixel's band values
-        const pixelOffset = (line * samples * bands) + (sample * bands);
+      for (let i = 0; i < validBandNumbers.length; i++) {
+        const bandNumber = validBandNumbers[i];
+        const bandIndex = bandNumber - 1;
 
-        // Extract all bands for this pixel at once
-        for (let band = 0; band < bands; band++) {
-          data[band][line][sample] = rawData[pixelOffset + band];
-        }
+        // Calculate position for this band in this line
+        const lineStartByte = line * samples * bands * 2;
+        const bandStartByte = lineStartByte + (bandIndex * samples * 2);
+        const bandLineSizeBytes = samples * 2;
 
-        processedCount++;
+        // Read this band's data for this line
+        const lineBuffer = await readFileBytes(dataFile, bandStartByte, bandLineSizeBytes);
+        const rawLineData = createEndianAwareTypedArray(lineBuffer, isBigEndian);
+
+        bandData[i][line] = rawLineData;
       }
-
-      // Report progress periodically
-      if (onProgress && line % progressSteps === 0) {
-        onProgress((line / lines) * 100);
+    }
+  }
+  // For BIP format, we need to read by pixels (optimized with chunked reads)
+  else {
+    // Initialize all band arrays
+    for (let i = 0; i < validBandNumbers.length; i++) {
+      bandData[i] = new Array(lines);
+      for (let line = 0; line < lines; line++) {
+        bandData[i][line] = new Uint16Array(samples);
       }
     }
 
-    if (onProgress) onProgress(100);
-    return data;
-  }
+    // Convert band numbers to 0-based indices for faster lookup
+    const bandIndices = validBandNumbers.map(b => b - 1);
 
-  // For BSQ and BIL formats, process one band at a time
-  for (let band = 0; band < bands; band++) {
-    // Create a 2D array for this band using a single allocation per line
-    const bandData = new Array(lines);
+    // Process in chunks of lines to reduce file I/O operations
+    const chunkSize = 50; // Process 50 lines at a time
 
-    if (interleave.toLowerCase() === 'bsq') {
-      // For BSQ, we can optimize by reading entire lines at once
-      const bandOffset = band * totalPixels;
+    for (let lineStart = 0; lineStart < lines; lineStart += chunkSize) {
+      const lineEnd = Math.min(lineStart + chunkSize, lines);
+      const linesInChunk = lineEnd - lineStart;
 
-      for (let line = 0; line < lines; line++) {
-        const lineData = new Uint16Array(samples);
-        const lineOffset = bandOffset + (line * samples);
-        lineData.set(rawData.subarray(lineOffset, lineOffset + samples));
-        bandData[line] = lineData;
-      }
-    } else if (interleave.toLowerCase() === 'bil') {
-      // For BIL, optimize by reading entire band segments within each line
-      for (let line = 0; line < lines; line++) {
-        const lineData = new Uint16Array(samples);
-        const lineOffset = (line * samples * bands) + (band * samples);
-        lineData.set(rawData.subarray(lineOffset, lineOffset + samples));
-        bandData[line] = lineData;
-      }
-    } else {
-      // Generic fallback implementation
-      for (let line = 0; line < lines; line++) {
-        const lineData = new Uint16Array(samples);
+      // Read chunk of lines at once
+      const chunkStartByte = lineStart * samples * bands * 2;
+      const chunkSizeBytes = linesInChunk * samples * bands * 2;
 
+      const chunkBuffer = await readFileBytes(dataFile, chunkStartByte, chunkSizeBytes);
+      const rawChunkData = createEndianAwareTypedArray(chunkBuffer, isBigEndian);
+
+      // Process each line in the chunk
+      for (let lineOffset = 0; lineOffset < linesInChunk; lineOffset++) {
+        const line = lineStart + lineOffset;
+        const lineStartIndex = lineOffset * samples * bands;
+
+        // Extract the specific bands we need from each pixel in this line
         for (let sample = 0; sample < samples; sample++) {
-          const offset = (line * samples * bands) + (sample * bands) + band;
-          lineData[sample] = rawData[offset];
+          const pixelStartIndex = lineStartIndex + (sample * bands);
+
+          for (let i = 0; i < validBandNumbers.length; i++) {
+            const bandIndex = bandIndices[i];
+            bandData[i][line][sample] = rawChunkData[pixelStartIndex + bandIndex];
+          }
         }
-
-        bandData[line] = lineData;
       }
-    }
 
-    // Store the band
-    data[band] = bandData;
-
-    // Report progress
-    if (onProgress) {
-      onProgress((band + 1) / bands * 100);
+      // Progress feedback
+      console.log(`BIP processing: ${Math.round((lineEnd / lines) * 100)}%`);
     }
   }
 
-  return data;
+  return bandData;
+}
+
+// Extract spectral profile for a single pixel using targeted read
+export async function extractPixelSpectrum(dataFile, metadata, x, y) {
+  const { samples, lines, bands, interleave, isBigEndian } = metadata;
+
+  // Bounds check
+  if (x < 0 || x >= samples || y < 0 || y >= lines) {
+    throw new Error(`Pixel coordinates (${x}, ${y}) out of bounds`);
+  }
+
+  const spectrum = [];
+  const wavelengthData = metadata.wavelengthValues || [];
+
+  // For BIP format, all bands for the pixel are contiguous
+  if (interleave.toLowerCase() === 'bip') {
+    const pixelStartByte = (y * samples * bands + x * bands) * 2;
+    const pixelSizeBytes = bands * 2;
+
+    const pixelBuffer = await readFileBytes(dataFile, pixelStartByte, pixelSizeBytes);
+    const rawPixelData = createEndianAwareTypedArray(pixelBuffer, isBigEndian);
+
+    for (let band = 0; band < bands; band++) {
+      let value = rawPixelData[band];
+      // Clip values above 55535 to 0
+      if (value > 55535) value = 0;
+
+      const wavelength = wavelengthData[band] || band + 1;
+
+      spectrum.push({
+        band: band + 1,
+        wavelength,
+        value
+      });
+    }
+  }
+  // For BSQ and BIL, we need to read each band separately
+  else {
+    const totalPixels = samples * lines;
+
+    for (let band = 1; band <= bands; band++) {
+      let offset;
+
+      if (interleave.toLowerCase() === 'bsq') {
+        offset = ((band - 1) * totalPixels + y * samples + x) * 2;
+      } else { // BIL
+        offset = (y * samples * bands + (band - 1) * samples + x) * 2;
+      }
+
+      // Read just 2 bytes for this one value
+      const valueBuffer = await readFileBytes(dataFile, offset, 2);
+      const rawValue = createEndianAwareTypedArray(valueBuffer, isBigEndian);
+      let value = rawValue[0];
+
+      // Clip values above 55535 to 0
+      if (value > 55535) value = 0;
+
+      const wavelength = wavelengthData[band - 1] || band;
+
+      spectrum.push({
+        band,
+        wavelength,
+        value
+      });
+    }
+  }
+
+  return spectrum;
 }

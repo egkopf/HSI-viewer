@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { parseHDRFile, parseRGBPreview, parseFullData } from '../utils/parseHyperspectral';
+import { parseHDRFile, parseSpecificBands } from '../utils/parseHyperspectral';
 
-const FileUpload = ({ onPreviewReady, onFullDataReady, onProgressUpdate }) => {
+const FileUpload = ({ onDataReady }) => {
   const [processing, setProcessing] = useState(false);
-  const [processingFull, setProcessingFull] = useState(false);
 
   const processFiles = async (files) => {
     try {
@@ -53,48 +52,28 @@ const FileUpload = ({ onPreviewReady, onFullDataReady, onProgressUpdate }) => {
       console.log(`Processing header file: ${headerFile.name}`);
       console.log(`Processing data file: ${dataFile.name}`);
 
-      // Get default RGB bands or use fallback values
-      const defaultBands = metadata["default bands"]
-        ? metadata["default bands"].replace(/[{}]/g, '').split(',').map(Number)
-        : [60, 40, 20]; // Fallback RGB bands if not specified
+      // Get default RGB bands
+      const defaultBands = metadata.defaultBands || [60, 40, 20];
 
-      // Quick parse of just the RGB bands
-      console.log('Processing RGB preview...');
-      const rgbData = await parseRGBPreview(dataFile, metadata, defaultBands);
+      console.log('Loading RGB bands:', defaultBands);
 
-      // Send the preview data to parent
-      onPreviewReady({
-        fileName: dataFile.name,
-        metadata,
-        imageData: rgbData
-      });
+      // Load only the RGB bands
+      const rgbData = await parseSpecificBands(dataFile, metadata, defaultBands);
 
       setProcessing(false);
 
-      // Start processing the full dataset in the background
-      setProcessingFull(true);
-      console.log(`Processing full hyperspectral data (${metadata.interleave || 'bsq'} format)...`);
-
-      const fullData = await parseFullData(dataFile, metadata, (progress) => {
-        // Send every progress update directly to parent
-        if (onProgressUpdate) {
-          onProgressUpdate(progress);
-        }
-      });
-
-      setProcessingFull(false);
-
-      // Send the complete data to parent
-      onFullDataReady({
+      // Send the data to parent
+      onDataReady({
         fileName: dataFile.name,
+        dataFile, // Pass the file object for later pixel spectrum extraction
         metadata,
-        imageData: fullData
+        bandData: rgbData,
+        loadedBands: defaultBands
       });
 
     } catch (error) {
       console.error('Error processing files:', error);
       setProcessing(false);
-      setProcessingFull(false);
       alert('File processing failed: ' + error.message);
     }
   };
@@ -105,10 +84,10 @@ const FileUpload = ({ onPreviewReady, onFullDataReady, onProgressUpdate }) => {
         <div className="p-4 border-2 border-dashed border-gray-300 rounded-lg">
           <input
             type="file"
-            accept="*" // Accept all file types
+            accept="*"
             multiple
             onChange={(e) => processFiles(e.target.files)}
-            disabled={processing || processingFull}
+            disabled={processing}
             className="w-full"
           />
           <p className="mt-2 text-sm text-gray-500">
@@ -118,7 +97,7 @@ const FileUpload = ({ onPreviewReady, onFullDataReady, onProgressUpdate }) => {
 
         {processing && (
           <div className="mt-2">
-            <p>Generating preview...</p>
+            <p>Loading data...</p>
           </div>
         )}
       </div>
