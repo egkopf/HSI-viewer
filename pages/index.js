@@ -24,6 +24,7 @@ export default function Home() {
 
       <FileUpload onDataReady={handleDataReady} />
 
+      {/* When there is data ready, display the ImageRenderer */}
       {bandData && metadata && (
         <div className="mt-4">
           {/* <p className="mb-2 text-gray-600">

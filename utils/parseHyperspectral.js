@@ -1,4 +1,5 @@
 import { selectDefaultRGBBands } from './bandSelection.js';
+import { formatMetadataSummary, getCompactSummary } from './consoleInfo.js';
 
 export async function parseHDRFile(hdrFile) {
   const text = await hdrFile.text();
@@ -79,8 +80,9 @@ export async function parseHDRFile(hdrFile) {
   const byteOrder = parseInt(metadata["byte order"], 10);
   const isBigEndian = byteOrder === 1;
 
+
   // Parse numeric values
-    return {
+    const finalMetadata = {
     ...metadata,
     samples: parseInt(metadata.samples, 10),
     lines: parseInt(metadata.lines, 10),
@@ -91,6 +93,11 @@ export async function parseHDRFile(hdrFile) {
     isBigEndian: isBigEndian,
     defaultBands: defaultBands
   };
+
+    console.log(formatMetadataSummary(finalMetadata));
+
+    return finalMetadata;
+
 }
 
 // Helper function to read specific bytes from a file
@@ -167,43 +174,44 @@ export async function parseSpecificBands(dataFile, metadata, bandNumbers) {
     Math.max(1, Math.min(bands, Math.floor(band) || 1))
   );
 
-  console.log('Loading bands:', validBandNumbers);
-
-  // Array for the requested bands
+  // Array of arrays for the requested bands
   const bandData = new Array(validBandNumbers.length);
 
   // For BSQ format, we can read entire bands efficiently
-  if (interleave.toLowerCase() === 'bsq') {
-    const totalPixels = samples * lines;
-
-    for (let i = 0; i < validBandNumbers.length; i++) {
-      const bandNumber = validBandNumbers[i];
-      const bandIndex = bandNumber - 1;
-
-      // Calculate start position for this band
-      const bandStartByte = bandIndex * totalPixels * 2; // *2 for 16-bit
-      const bandSizeBytes = totalPixels * 2;
-
-      try {
-        // Read entire band at once
-        const bandBuffer = await readFileBytes(dataFile, bandStartByte, bandSizeBytes);
-        const rawBandData = createEndianAwareTypedArray(bandBuffer, isBigEndian, metadata.dataType);
-
-        // Convert flat array to 2D array [lines][samples] - more efficiently
-        const band2D = new Array(lines);
-        for (let line = 0; line < lines; line++) {
-          const lineStartIndex = line * samples;
-          const lineEndIndex = lineStartIndex + samples;
-          band2D[line] = rawBandData.subarray(lineStartIndex, lineEndIndex);
-        }
-
-        bandData[i] = band2D;
-      } catch (error) {
-        console.error(`Error reading band ${bandNumber}:`, error);
-        throw error;
-      }
-    }
+if (interleave.toLowerCase() === 'bsq') {
+  const totalPixels = samples * lines;
+  const bytesPerPixel = 2; // 16-bit
+  const bandSizeBytes = totalPixels * bytesPerPixel;
+  
+  // Pre-allocate all band arrays
+  for (let i = 0; i < validBandNumbers.length; i++) {
+    bandData[i] = new Array(lines);
   }
+
+  // Read all bands in parallel for maximum speed
+  const readPromises = validBandNumbers.map(async (bandNumber, i) => {
+    const bandIndex = bandNumber - 1;
+    const bandStartByte = bandIndex * bandSizeBytes;
+
+    try {
+      // Read entire band in one operation
+      const bandBuffer = await readFileBytes(dataFile, bandStartByte, bandSizeBytes);
+      const rawBandData = createEndianAwareTypedArray(bandBuffer, isBigEndian, metadata.dataType);
+
+      // Fast line assignment using subarray views (zero-copy)
+      for (let line = 0; line < lines; line++) {
+        const lineStart = line * samples;
+        bandData[i][line] = rawBandData.subarray(lineStart, lineStart + samples);
+      }
+    } catch (error) {
+      console.error(`Error reading band ${bandNumber}:`, error);
+      throw error;
+    }
+  });
+
+  // Wait for all bands to finish reading in parallel
+  await Promise.all(readPromises);
+}
   // For BIL format, read by lines
   else if (interleave.toLowerCase() === 'bil') {
     // Initialize all band arrays
@@ -232,50 +240,80 @@ export async function parseSpecificBands(dataFile, metadata, bandNumbers) {
   }
   // For BIP format, we need to read by pixels (optimized with chunked reads)
   else {
-    // Initialize all band arrays
-    for (let i = 0; i < validBandNumbers.length; i++) {
-      bandData[i] = new Array(lines);
-      for (let line = 0; line < lines; line++) {
-        bandData[i][line] = new Uint16Array(samples);
-      }
+  // BIP format - Band Interleaved by Pixel
+  const bytesPerPixel = 2;
+  const bandsPerPixel = bands;
+  const pixelsPerLine = samples;
+  
+  // Pre-allocate all arrays
+  for (let i = 0; i < validBandNumbers.length; i++) {
+    bandData[i] = new Array(lines);
+    for (let line = 0; line < lines; line++) {
+      bandData[i][line] = new Uint16Array(samples);
     }
+  }
 
-    // Convert band numbers to 0-based indices for faster lookup
-    const bandIndices = validBandNumbers.map(b => b - 1);
+  const bandIndices = validBandNumbers.map(b => b - 1);
+  const numRequestedBands = validBandNumbers.length;
+  
+  // Larger chunks for better I/O efficiency
+  const chunkSize = Math.min(128, lines);
 
-    // Process in chunks of lines to reduce file I/O operations
-    const chunkSize = 50; // Process 50 lines at a time
+  for (let lineStart = 0; lineStart < lines; lineStart += chunkSize) {
+    const lineEnd = Math.min(lineStart + chunkSize, lines);
+    const linesInChunk = lineEnd - lineStart;
+    
+    const chunkStartByte = lineStart * pixelsPerLine * bandsPerPixel * bytesPerPixel;
+    const chunkSizeBytes = linesInChunk * pixelsPerLine * bandsPerPixel * bytesPerPixel;
 
-    for (let lineStart = 0; lineStart < lines; lineStart += chunkSize) {
-      const lineEnd = Math.min(lineStart + chunkSize, lines);
-      const linesInChunk = lineEnd - lineStart;
-
-      // Read chunk of lines at once
-      const chunkStartByte = lineStart * samples * bands * 2;
-      const chunkSizeBytes = linesInChunk * samples * bands * 2;
-
+    try {
       const chunkBuffer = await readFileBytes(dataFile, chunkStartByte, chunkSizeBytes);
-      const rawChunkData = createEndianAwareTypedArray(chunkBuffer, isBigEndian);
+      const rawChunkData = createEndianAwareTypedArray(chunkBuffer, isBigEndian, metadata.dataType);
 
-      // Process each line in the chunk
+      // Process each line in the chunk with optimized nested loops
       for (let lineOffset = 0; lineOffset < linesInChunk; lineOffset++) {
-        const line = lineStart + lineOffset;
-        const lineStartIndex = lineOffset * samples * bands;
-
-        // Extract the specific bands we need from each pixel in this line
-        for (let sample = 0; sample < samples; sample++) {
-          const pixelStartIndex = lineStartIndex + (sample * bands);
-
-          for (let i = 0; i < validBandNumbers.length; i++) {
-            const bandIndex = bandIndices[i];
-            bandData[i][line][sample] = rawChunkData[pixelStartIndex + bandIndex];
+        const actualLine = lineStart + lineOffset;
+        const lineBaseIndex = lineOffset * pixelsPerLine * bandsPerPixel;
+        
+        // Pre-fetch line arrays to avoid repeated lookups
+        const lineArrays = bandData.map(band => band[actualLine]);
+        
+        // Process pixels in batches to improve cache locality
+        const batchSize = 64;
+        for (let sampleStart = 0; sampleStart < pixelsPerLine; sampleStart += batchSize) {
+          const sampleEnd = Math.min(sampleStart + batchSize, pixelsPerLine);
+          
+          for (let sample = sampleStart; sample < sampleEnd; sample++) {
+            const pixelBaseIndex = lineBaseIndex + (sample * bandsPerPixel);
+            
+            // Unroll the inner band loop for better performance
+            if (numRequestedBands === 3) {
+              // Most common case - RGB
+              lineArrays[0][sample] = rawChunkData[pixelBaseIndex + bandIndices[0]];
+              lineArrays[1][sample] = rawChunkData[pixelBaseIndex + bandIndices[1]];
+              lineArrays[2][sample] = rawChunkData[pixelBaseIndex + bandIndices[2]];
+            } else if (numRequestedBands === 1) {
+              // Single band case
+              lineArrays[0][sample] = rawChunkData[pixelBaseIndex + bandIndices[0]];
+            } else {
+              // General case for other numbers of bands
+              for (let i = 0; i < numRequestedBands; i++) {
+                lineArrays[i][sample] = rawChunkData[pixelBaseIndex + bandIndices[i]];
+              }
+            }
           }
         }
       }
+    } catch (error) {
+      console.error(`Error reading line chunk ${lineStart}-${lineEnd}:`, error);
+      throw error;
+    }
 
-      // Progress feedback
+    // Progress feedback (less frequent)
+    if (lineEnd % (chunkSize * 4) === 0 || lineEnd === lines) {
       console.log(`BIP processing: ${Math.round((lineEnd / lines) * 100)}%`);
     }
+  }
   }
 
   return bandData;

@@ -25,28 +25,19 @@ const ExportButton = ({ svgRef, fileName = "spectral-profile" }) => {
 const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
   const canvasRef = useRef(null);
   const svgRef = useRef(null);
+
   // Initialize bands from metadata or loadedBands
   const [bands, setBands] = useState(() => {
-    if (metadata?.defaultBands) {
-      return {
-        red: metadata.defaultBands[0],
-        green: metadata.defaultBands[1],
-        blue: metadata.defaultBands[2]
-      };
-    }
-    if (loadedBands?.length === 3) {
-      return {
-        red: loadedBands[0],
-        green: loadedBands[1],
-        blue: loadedBands[2]
-      };
-    }
-    const fallbackBands = selectDefaultRGBBands(metadata || { bands: 100 });
+
+  if (loadedBands?.length >= 3) {
     return {
-      red: fallbackBands[0],
-      green: fallbackBands[1], 
-      blue: fallbackBands[2]
-    };  
+      red: loadedBands[0],
+      green: loadedBands[1], 
+      blue: loadedBands[2]
+    };
+  }
+  // Simple fallback for initial render
+  return { red: 1, green: 1, blue: 1 };
   });
 
   // Separate input state for form values (what user types) - keep as strings to allow empty/partial input
@@ -148,7 +139,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
     }
   }, [dataFile, metadata, currentLoadedBands]);
 
-  // Render the image data to the canvas
+  // Render the image data to the canvas - OPTIMIZED VERSION
   useEffect(() => {
     if (!currentBandData || !metadata || !canvasRef.current) return;
 
@@ -163,33 +154,31 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
     canvas.height = lines;
 
     const imageData = ctx.createImageData(samples, lines);
+    const data = imageData.data; // Direct reference to avoid repeated lookups
 
     console.log(`Rendering bands R:${bands.red}, G:${bands.green}, B:${bands.blue}`);
 
-    // Calculate band statistics for normalization
+    // Optimized band statistics calculation
     const calculateBandStats = (bandIndex) => {
       if (!currentBandData[bandIndex]) return { min: 0, max: 65535 };
 
       const values = [];
-      const sampleRate = 0.2;
       const ignoreValue = parseFloat(metadata["data ignore value"] || -1);
+      const skipInterval = 5; // Sample every 5th pixel instead of random
 
-      for (let line = 0; line < lines; line++) {
-        if (Math.random() > sampleRate) continue;
-        for (let sample = 0; sample < samples; sample++) {
-          if (Math.random() > sampleRate) continue;
-          if (currentBandData[bandIndex][line] && currentBandData[bandIndex][line][sample] !== undefined) {
-            const value = currentBandData[bandIndex][line][sample];
-            if (value !== ignoreValue) {
-              values.push(value);
-            }
+      for (let line = 0; line < lines; line += skipInterval) {
+        const lineData = currentBandData[bandIndex][line];
+        if (!lineData) continue;
+        
+        for (let sample = 0; sample < samples; sample += skipInterval) {
+          const value = lineData[sample];
+          if (value !== undefined && value !== ignoreValue && value <= 55535) {
+            values.push(value);
           }
         }
       }
 
-      if (values.length === 0) {
-        return { min: 0, max: 65535 };
-      }
+      if (values.length === 0) return { min: 0, max: 65535 };
 
       values.sort((a, b) => a - b);
       const lowerIndex = Math.floor(values.length * normalizationSettings.lowerPercentile);
@@ -207,59 +196,77 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
       blue: calculateBandStats(2)
     };
 
-    // Normalize function with gamma correction
-    const normalize = (value, min, max, sample, line, samples, lines) => {
-      const isEdgePixel = (sample === 0 || sample === samples - 1 ||
-        line === 0 || line === lines - 1);
+    // Pre-calculate normalization values
+    const redRange = bandStats.red.max - bandStats.red.min;
+    const greenRange = bandStats.green.max - bandStats.green.min;
+    const blueRange = bandStats.blue.max - bandStats.blue.min;
+    const gamma = normalizationSettings.gamma;
+    const ignoreValue = parseFloat(metadata["data ignore value"] || -1);
 
-      if (isEdgePixel) return 0;
+    // Pre-allocate band data references
+    const redBand = currentBandData[0];
+    const greenBand = currentBandData[1];
+    const blueBand = currentBandData[2];
 
-      // Clip values above 55535 to 0
-      if (value > 55535) return 0;
-
-      const range = max - min;
-      if (range <= 0) return 0;
-
+    // Fast normalization function (inline for better performance)
+    const fastNormalize = (value, min, range) => {
+      if (value > 55535 || range <= 0) return 0;
       let normalized = (value - min) / range;
       normalized = Math.max(0, Math.min(1, normalized));
-      normalized = Math.pow(normalized, normalizationSettings.gamma);
-
-      return Math.floor(normalized * 255);
+      return Math.floor(Math.pow(normalized, gamma) * 255);
     };
 
-    // Process each pixel
-    for (let i = 0; i < samples * lines; i++) {
-      const line = Math.floor(i / samples);
-      const sample = i % samples;
+    // Process pixels in chunks for better cache performance
+    let dataIndex = 0;
+    
+    for (let line = 0; line < lines; line++) {
+      const redLine = redBand[line];
+      const greenLine = greenBand[line];
+      const blueLine = blueBand[line];
+      
+      // Skip line if any band data is missing
+      if (!redLine || !greenLine || !blueLine) {
+        // Fill with black pixels
+        for (let sample = 0; sample < samples; sample++) {
+          data[dataIndex++] = 0; // R
+          data[dataIndex++] = 0; // G
+          data[dataIndex++] = 0; // B
+          data[dataIndex++] = 255; // A
+        }
+        continue;
+      }
 
-      try {
-        const redValue = currentBandData[0][line][sample];
-        const greenValue = currentBandData[1][line][sample];
-        const blueValue = currentBandData[2][line][sample];
+      const isEdgeLine = (line === 0 || line === lines - 1);
 
-        const ignoreValue = parseFloat(metadata["data ignore value"] || -1);
+      // Process samples in batches for better performance
+      for (let sample = 0; sample < samples; sample++) {
+        const isEdgePixel = isEdgeLine || (sample === 0 || sample === samples - 1);
+        
+        if (isEdgePixel) {
+          data[dataIndex++] = 0; // R
+          data[dataIndex++] = 0; // G
+          data[dataIndex++] = 0; // B
+          data[dataIndex++] = 255; // A
+          continue;
+        }
+
+        const redValue = redLine[sample];
+        const greenValue = greenLine[sample];
+        const blueValue = blueLine[sample];
+
         const isIgnored = (redValue === ignoreValue || greenValue === ignoreValue || blueValue === ignoreValue);
 
         if (isIgnored) {
-          imageData.data[i * 4 + 0] = 0;
-          imageData.data[i * 4 + 1] = 0;
-          imageData.data[i * 4 + 2] = 0;
-          imageData.data[i * 4 + 3] = 255;
+          data[dataIndex++] = 0; // R
+          data[dataIndex++] = 0; // G
+          data[dataIndex++] = 0; // B
+          data[dataIndex++] = 255; // A
         } else {
-          const normRed = normalize(redValue, bandStats.red.min, bandStats.red.max, sample, line, samples, lines);
-          const normGreen = normalize(greenValue, bandStats.green.min, bandStats.green.max, sample, line, samples, lines);
-          const normBlue = normalize(blueValue, bandStats.blue.min, bandStats.blue.max, sample, line, samples, lines);
-
-          imageData.data[i * 4 + 0] = normRed;
-          imageData.data[i * 4 + 1] = normGreen;
-          imageData.data[i * 4 + 2] = normBlue;
-          imageData.data[i * 4 + 3] = 255;
+          data[dataIndex++] = fastNormalize(redValue, bandStats.red.min, redRange);
+          data[dataIndex++] = fastNormalize(greenValue, bandStats.green.min, greenRange);
+          data[dataIndex++] = fastNormalize(blueValue, bandStats.blue.min, blueRange);
+          data[dataIndex++] = 255; // A
         }
-      } catch (error) {
-        imageData.data[i * 4 + 0] = 0;
-        imageData.data[i * 4 + 1] = 0;
-        imageData.data[i * 4 + 2] = 0;
-        imageData.data[i * 4 + 3] = 255;
       }
     }
 
@@ -286,6 +293,13 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
       console.log(`Extracting spectrum for pixel (${x}, ${y})`);
       const pixelSpectrum = await extractPixelSpectrum(dataFile, metadata, x, y);
 
+      const validValues = pixelSpectrum.filter(point => point.value > 0);
+
+      if (validValues.length === 0 || validValues.length < pixelSpectrum.length * 0.1) {
+        console.log(`Pixel (${x}, ${y}) has no valid spectral data - ignoring`);
+        return; // Don't add to spectral graph
+      }
+
       const randomColor = `rgb(${Math.floor(Math.random() * 200)}, ${Math.floor(Math.random() * 200)}, ${Math.floor(Math.random() * 200)})`;
 
       const newSpectralData = {
@@ -307,11 +321,39 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    canvas.addEventListener('click', handlePixelClick);
-    return () => {
-      canvas.removeEventListener('click', handlePixelClick);
+    const handleCanvasClick = async (event) => {
+      if (!currentBandData || !canvasRef.current) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+
+      const x = Math.floor((event.clientX - rect.left) * scaleX);
+      const y = Math.floor((event.clientY - rect.top) * scaleY);
+
+      if (x < 0 || x >= metadata.samples || y < 0 || y >= metadata.lines) {
+        return;
+      }
+
+      // Check if all RGB values are 0 or negative (ignore pixel, edge pixel, or bad data)
+      const redValue = currentBandData[0]?.[y]?.[x] || 0;
+      const greenValue = currentBandData[1]?.[y]?.[x] || 0;
+      const blueValue = currentBandData[2]?.[y]?.[x] || 0;
+
+      if (redValue <= 0 && greenValue <= 0 && blueValue <= 0) {
+        console.log(`Clicked on pixel (${x}, ${y}) with invalid values (${redValue}, ${greenValue}, ${blueValue}) - ignoring`);
+        return; // Do nothing for invalid pixels
+      }
+
+      // Proceed with original handlePixelClick logic
+      await handlePixelClick(event);
     };
-  }, [handlePixelClick]);
+
+    canvas.addEventListener('click', handleCanvasClick);
+    return () => {
+      canvas.removeEventListener('click', handleCanvasClick);
+    };
+  }, [handlePixelClick, currentBandData, metadata]);
 
   // Handle clicking outside the graph
   useEffect(() => {
@@ -363,7 +405,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
 
   // Calculate spectral graph popup position
   const calculatePopupPosition = useCallback(() => {
-    const graphWidth = 320;
+    // const graphWidth = 320;
     const graphHeight = 240;
     const left = 20;
     const top = window.innerHeight - graphHeight - 130;
