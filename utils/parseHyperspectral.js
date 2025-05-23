@@ -1,3 +1,5 @@
+import { selectDefaultRGBBands } from './bandSelection.js';
+
 export async function parseHDRFile(hdrFile) {
   const text = await hdrFile.text();
   const metadata = {};
@@ -68,43 +70,22 @@ export async function parseHDRFile(hdrFile) {
   // Parse interleave format from metadata
   const interleave = metadata.interleave ? metadata.interleave.toLowerCase() : 'bsq';
 
-  // Set default bands if not specified
-  let defaultBands = [];
-  if (metadata["default bands"]) {
-    try {
-      defaultBands = metadata["default bands"].replace(/[{}]/g, '').split(',').map(Number);
-    } catch (error) {
-      console.error('Error parsing default bands:', error);
-      defaultBands = [];
-    }
-  }
-
-  if (!defaultBands.length || defaultBands.some(isNaN)) {
-    // Set sensible defaults based on typical RGB visualization for hyperspectral data
-    const bands = parseInt(metadata.bands, 10) || 224;
-    if (bands >= 224) { // AVIRIS-like sensor
-      defaultBands = [29, 19, 9]; // Approximately red, green, blue for AVIRIS
-    } else if (bands >= 100) {
-      defaultBands = [bands * 0.7, bands * 0.45, bands * 0.2].map(Math.floor); // 70%, 45%, 20% through bands
-    } else {
-      defaultBands = [Math.floor(bands * 0.7), Math.floor(bands * 0.5), Math.floor(bands * 0.3)];
-    }
-    console.log('No default bands specified, using:', defaultBands);
-  }
-
-  // Make sure default bands are valid 1-based indices
-  defaultBands = defaultBands.map(band => Math.max(1, Math.min(parseInt(metadata.bands, 10), band || 1)));
-
+  const defaultBands = selectDefaultRGBBands({
+    bands: metadata.bands,
+    wavelengthValues: metadata.wavelengthValues
+  });
+  
   // Parse byte order (default to 0 if not specified)
   const byteOrder = parseInt(metadata["byte order"], 10);
   const isBigEndian = byteOrder === 1;
 
   // Parse numeric values
-  return {
+    return {
     ...metadata,
     samples: parseInt(metadata.samples, 10),
     lines: parseInt(metadata.lines, 10),
     bands: parseInt(metadata.bands, 10),
+    dataType: parseInt(metadata["data type"], 10),
     interleave: interleave,
     byteOrder: isNaN(byteOrder) ? 0 : byteOrder,
     isBigEndian: isBigEndian,
@@ -119,9 +100,23 @@ async function readFileBytes(file, start, length) {
 }
 
 // Helper function to handle endianness when creating typed arrays
-function createEndianAwareTypedArray(buffer, isBigEndian) {
+function createEndianAwareTypedArray(buffer, isBigEndian, dataType = 12) {
+  let typedArray;
+  
+  // Create the appropriate typed array based on data type
+  if (dataType === 2) {
+    // 16-bit signed integer
+    typedArray = new Int16Array(buffer);
+  } else if (dataType === 12) {
+    // 16-bit unsigned integer  
+    typedArray = new Uint16Array(buffer);
+  } else {
+    console.warn(`Unsupported data type: ${dataType}, defaulting to Uint16Array`);
+    typedArray = new Uint16Array(buffer);
+  }
+  
+  // Handle byte swapping for big-endian data
   if (isBigEndian) {
-    // For big-endian (byte order=1), we need to swap bytes
     const u8 = new Uint8Array(buffer);
     const swappedBuffer = new ArrayBuffer(buffer.byteLength);
     const swappedU8 = new Uint8Array(swappedBuffer);
@@ -132,17 +127,20 @@ function createEndianAwareTypedArray(buffer, isBigEndian) {
         swappedU8[i] = u8[i + 1];
         swappedU8[i + 1] = u8[i];
       } else {
-        swappedU8[i] = u8[i]; // Handle odd byte at the end if it exists
+        swappedU8[i] = u8[i];
       }
     }
 
-    return new Uint16Array(swappedBuffer);
-  } else {
-    // For little-endian (byte order=0), we can use the buffer directly
-    return new Uint16Array(buffer);
+    // Create typed array from swapped buffer
+    if (dataType === 2) {
+      return new Int16Array(swappedBuffer);
+    } else {
+      return new Uint16Array(swappedBuffer);
+    }
   }
-}
 
+  return typedArray;
+}
 // Calculate byte offset for a specific band/line/sample
 function calculateOffset(band, line, sample, metadata) {
   const { samples, lines, bands, interleave } = metadata;
@@ -186,20 +184,24 @@ export async function parseSpecificBands(dataFile, metadata, bandNumbers) {
       const bandStartByte = bandIndex * totalPixels * 2; // *2 for 16-bit
       const bandSizeBytes = totalPixels * 2;
 
-      // Read entire band at once
-      const bandBuffer = await readFileBytes(dataFile, bandStartByte, bandSizeBytes);
-      const rawBandData = createEndianAwareTypedArray(bandBuffer, isBigEndian);
+      try {
+        // Read entire band at once
+        const bandBuffer = await readFileBytes(dataFile, bandStartByte, bandSizeBytes);
+        const rawBandData = createEndianAwareTypedArray(bandBuffer, isBigEndian, metadata.dataType);
 
-      // Convert flat array to 2D array [lines][samples]
-      const band2D = new Array(lines);
-      for (let line = 0; line < lines; line++) {
-        const lineData = new Uint16Array(samples);
-        const lineStartIndex = line * samples;
-        lineData.set(rawBandData.subarray(lineStartIndex, lineStartIndex + samples));
-        band2D[line] = lineData;
+        // Convert flat array to 2D array [lines][samples] - more efficiently
+        const band2D = new Array(lines);
+        for (let line = 0; line < lines; line++) {
+          const lineStartIndex = line * samples;
+          const lineEndIndex = lineStartIndex + samples;
+          band2D[line] = rawBandData.subarray(lineStartIndex, lineEndIndex);
+        }
+
+        bandData[i] = band2D;
+      } catch (error) {
+        console.error(`Error reading band ${bandNumber}:`, error);
+        throw error;
       }
-
-      bandData[i] = band2D;
     }
   }
   // For BIL format, read by lines
@@ -297,7 +299,7 @@ export async function extractPixelSpectrum(dataFile, metadata, x, y) {
     const pixelSizeBytes = bands * 2;
 
     const pixelBuffer = await readFileBytes(dataFile, pixelStartByte, pixelSizeBytes);
-    const rawPixelData = createEndianAwareTypedArray(pixelBuffer, isBigEndian);
+const rawPixelData = createEndianAwareTypedArray(pixelBuffer, isBigEndian, metadata.dataType);
 
     for (let band = 0; band < bands; band++) {
       let value = rawPixelData[band];
@@ -328,7 +330,7 @@ export async function extractPixelSpectrum(dataFile, metadata, x, y) {
 
       // Read just 2 bytes for this one value
       const valueBuffer = await readFileBytes(dataFile, offset, 2);
-      const rawValue = createEndianAwareTypedArray(valueBuffer, isBigEndian);
+      const rawValue = createEndianAwareTypedArray(valueBuffer, isBigEndian, metadata.dataType);
       let value = rawValue[0];
 
       // Clip values above 55535 to 0

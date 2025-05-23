@@ -53,7 +53,7 @@ const FileUpload = ({ onDataReady }) => {
       console.log(`Processing data file: ${dataFile.name}`);
 
       // Get default RGB bands
-      const defaultBands = metadata.defaultBands || [60, 40, 20];
+      const defaultBands = metadata.defaultBands;
 
       console.log('Loading RGB bands:', defaultBands);
 

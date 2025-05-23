@@ -26,9 +26,9 @@ export default function Home() {
 
       {bandData && metadata && (
         <div className="mt-4">
-          <p className="mb-2 text-gray-600">
+          {/* <p className="mb-2 text-gray-600">
             Loaded: {fileName} (Bands: {loadedBands?.join(', ')})
-          </p>
+          </p> */}
           <ImageRenderer
             bandData={bandData}
             metadata={metadata}

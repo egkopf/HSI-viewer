@@ -41,7 +41,12 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
         blue: loadedBands[2]
       };
     }
-    return { red: 1, green: 1, blue: 1 };
+    const fallbackBands = selectDefaultRGBBands(metadata || { bands: 100 });
+    return {
+      red: fallbackBands[0],
+      green: fallbackBands[1], 
+      blue: fallbackBands[2]
+    };  
   });
 
   // Separate input state for form values (what user types) - keep as strings to allow empty/partial input
