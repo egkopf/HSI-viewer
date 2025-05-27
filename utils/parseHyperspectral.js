@@ -1,6 +1,8 @@
 import { selectDefaultRGBBands } from './bandSelection.js';
 import { formatMetadataSummary, getCompactSummary } from './consoleInfo.js';
+import { isValidPixelValue } from './dataValidation.js';
 
+// Enhanced parseHDRFile function with better field extraction
 export async function parseHDRFile(hdrFile) {
   const text = await hdrFile.text();
   const metadata = {};
@@ -13,27 +15,20 @@ export async function parseHDRFile(hdrFile) {
   text.split('\n').forEach((line) => {
     const trimmedLine = line.trim();
 
-    // Check if this line starts a key-value pair
     if (trimmedLine.includes('=') && !inMultilineValue) {
       const [key, value] = trimmedLine.split('=');
       currentKey = key.trim();
       currentValue = value.trim();
 
-      // Check if this value continues on multiple lines (has opening brace but no closing brace)
       if (currentValue.includes('{') && !currentValue.includes('}')) {
         inMultilineValue = true;
       } else {
-        // Store complete key-value pair
         metadata[currentKey] = currentValue;
         currentKey = null;
         currentValue = '';
       }
-    }
-    // Continue collecting a multi-line value
-    else if (inMultilineValue && currentKey) {
+    } else if (inMultilineValue && currentKey) {
       currentValue += ' ' + trimmedLine;
-
-      // Check if this line completes the multi-line value
       if (trimmedLine.includes('}')) {
         metadata[currentKey] = currentValue;
         inMultilineValue = false;
@@ -43,23 +38,18 @@ export async function parseHDRFile(hdrFile) {
     }
   });
 
-  // Second pass: parse special values like wavelength
+  // Parse wavelength data
   if (metadata.wavelength) {
     try {
-      // Extract wavelength values from the multi-line format
       const wavelengthStr = metadata.wavelength.replace(/[{}]/g, '');
       const parsedWavelengths = wavelengthStr.split(',')
         .map(w => parseFloat(w.trim()))
         .filter(w => !isNaN(w));
 
-      // Verify we have the expected number of wavelength values
       const expectedBands = parseInt(metadata.bands, 10);
       if (parsedWavelengths.length === expectedBands) {
         metadata.wavelengthValues = parsedWavelengths;
-        console.log(`Successfully parsed ${parsedWavelengths.length} wavelength values:`,
-          parsedWavelengths[0], '...', parsedWavelengths[parsedWavelengths.length - 1]);
       } else {
-        console.error(`Expected ${expectedBands} wavelength values but got ${parsedWavelengths.length}`);
         metadata.wavelengthValues = [];
       }
     } catch (error) {
@@ -68,21 +58,71 @@ export async function parseHDRFile(hdrFile) {
     }
   }
 
-  // Parse interleave format from metadata
-  const interleave = metadata.interleave ? metadata.interleave.toLowerCase() : 'bsq';
+  // Parse FWHM data
+  if (metadata.fwhm) {
+    try {
+      const fwhmStr = metadata.fwhm.replace(/[{}]/g, '');
+      const parsedFwhm = fwhmStr.split(',')
+        .map(f => parseFloat(f.trim()))
+        .filter(f => !isNaN(f));
+      metadata.fwhmValues = parsedFwhm;
+    } catch (error) {
+      console.error('Error parsing FWHM data:', error);
+      metadata.fwhmValues = [];
+    }
+  }
 
-  const defaultBands = selectDefaultRGBBands({
+  // Parse default bands
+  if (metadata["default bands"]) {
+    try {
+      const bandsStr = metadata["default bands"].replace(/[{}]/g, '');
+      const parsedBands = bandsStr.split(',')
+        .map(b => parseInt(b.trim(), 10))
+        .filter(b => !isNaN(b));
+      metadata.parsedDefaultBands = parsedBands;
+    } catch (error) {
+      console.error('Error parsing default bands:', error);
+    }
+  }
+
+  // Parse map info for geographic data
+  if (metadata["map info"]) {
+    try {
+      const mapStr = metadata["map info"].replace(/[{}]/g, '');
+      const mapParts = mapStr.split(',').map(s => s.trim());
+      if (mapParts.length >= 7) {
+        metadata.mapInfo = {
+          projection: mapParts[0],
+          referencePixelX: parseFloat(mapParts[1]),
+          referencePixelY: parseFloat(mapParts[2]),
+          referenceCoordX: parseFloat(mapParts[3]),
+          referenceCoordY: parseFloat(mapParts[4]),
+          pixelSizeX: parseFloat(mapParts[5]),
+          pixelSizeY: parseFloat(mapParts[6]),
+          zone: mapParts[7] || null,
+          hemisphere: mapParts[8] || null,
+          datum: mapParts[9] || null,
+          units: mapParts[10] || null
+        };
+      }
+    } catch (error) {
+      console.error('Error parsing map info:', error);
+    }
+  }
+
+  const interleave = metadata.interleave ? metadata.interleave.toLowerCase() : 'bsq';
+  
+  // Use parsed default bands if available, otherwise use intelligent selection
+  const defaultBands = metadata.parsedDefaultBands || selectDefaultRGBBands({
     bands: metadata.bands,
     wavelengthValues: metadata.wavelengthValues
   });
   
-  // Parse byte order (default to 0 if not specified)
   const byteOrder = parseInt(metadata["byte order"], 10);
   const isBigEndian = byteOrder === 1;
 
-
-  // Parse numeric values
-    const finalMetadata = {
+  // Parse numeric values with enhanced error checking
+  const finalMetadata = {
     ...metadata,
     samples: parseInt(metadata.samples, 10),
     lines: parseInt(metadata.lines, 10),
@@ -91,13 +131,20 @@ export async function parseHDRFile(hdrFile) {
     interleave: interleave,
     byteOrder: isNaN(byteOrder) ? 0 : byteOrder,
     isBigEndian: isBigEndian,
-    defaultBands: defaultBands
+    defaultBands: defaultBands,
+    
+    // Enhanced fields
+    dataIgnoreValue: parseFloat(metadata["data ignore value"]) || null,
+    reflectanceScaleFactor: parseFloat(metadata["reflectance scale factor"]) || null,
+    headerOffset: parseInt(metadata["header offset"], 10) || 0,
+    
+    // Geographic info
+    pixelSizeMeters: metadata.mapInfo?.pixelSizeX || null,
+    coordinateSystem: metadata.mapInfo?.projection || null
   };
 
-    console.log(formatMetadataSummary(finalMetadata));
-
-    return finalMetadata;
-
+  console.log(formatMetadataSummary(finalMetadata));
+  return finalMetadata;
 }
 
 // Helper function to read specific bytes from a file
@@ -341,8 +388,10 @@ const rawPixelData = createEndianAwareTypedArray(pixelBuffer, isBigEndian, metad
 
     for (let band = 0; band < bands; band++) {
       let value = rawPixelData[band];
-      // Clip values above 55535 to 0
-      if (value > 55535) value = 0;
+
+      if (!isValidPixelValue(value, metadata)) {
+        value = 0;
+      }
 
       const wavelength = wavelengthData[band] || band + 1;
 
@@ -371,8 +420,9 @@ const rawPixelData = createEndianAwareTypedArray(pixelBuffer, isBigEndian, metad
       const rawValue = createEndianAwareTypedArray(valueBuffer, isBigEndian, metadata.dataType);
       let value = rawValue[0];
 
-      // Clip values above 55535 to 0
-      if (value > 55535) value = 0;
+      if (!isValidPixelValue(value, metadata)) {
+        value = 0;
+      }
 
       const wavelength = wavelengthData[band - 1] || band;
 

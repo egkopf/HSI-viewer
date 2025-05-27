@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { parseSpecificBands, extractPixelSpectrum } from '../utils/parseHyperspectral';
+import { isValidPixelValue } from '../utils/dataValidation';
 
 const ExportButton = ({ svgRef, fileName = "spectral-profile" }) => {
   const handleExport = () => {
@@ -166,7 +167,6 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
       if (!currentBandData[bandIndex]) return { min: 0, max: 65535 };
 
       const values = [];
-      const ignoreValue = parseFloat(metadata["data ignore value"] || -1);
       const skipInterval = 5; // Sample every 5th pixel instead of random
 
       for (let line = 0; line < lines; line += skipInterval) {
@@ -175,7 +175,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
         
         for (let sample = 0; sample < samples; sample += skipInterval) {
           const value = lineData[sample];
-          if (value !== undefined && value !== ignoreValue && value <= 55535) {
+          if (value !== undefined && isValidPixelValue(value, metadata)) {
             values.push(value);
           }
         }
@@ -204,7 +204,6 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
     const greenRange = bandStats.green.max - bandStats.green.min;
     const blueRange = bandStats.blue.max - bandStats.blue.min;
     const gamma = normalizationSettings.gamma;
-    const ignoreValue = parseFloat(metadata["data ignore value"] || -1);
 
     // Pre-allocate band data references
     const redBand = currentBandData[0];
@@ -213,7 +212,8 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
 
     // Fast normalization function (inline for better performance)
     const fastNormalize = (value, min, range) => {
-      if (value > 55535 || range <= 0) return 0;
+      if (!isValidPixelValue(value, metadata) || range <= 0) return 0;
+
       let normalized = (value - min) / range;
       normalized = Math.max(0, Math.min(1, normalized));
       return Math.floor(Math.pow(normalized, gamma) * 255);
@@ -257,8 +257,8 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
         const greenValue = greenLine[sample];
         const blueValue = blueLine[sample];
 
-        const isIgnored = (redValue === ignoreValue || greenValue === ignoreValue || blueValue === ignoreValue);
-
+        const isIgnored = !isValidPixelValue(redValue, metadata) || !isValidPixelValue(greenValue, metadata) || !isValidPixelValue(blueValue, metadata);
+        
         if (isIgnored) {
           data[dataIndex++] = 0; // R
           data[dataIndex++] = 0; // G
@@ -381,7 +381,9 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
       const greenValue = currentBandData[1]?.[y]?.[x] || 0;
       const blueValue = currentBandData[2]?.[y]?.[x] || 0;
 
-      if (redValue <= 0 && greenValue <= 0 && blueValue <= 0) {
+      if (!isValidPixelValue(redValue, metadata) || 
+        !isValidPixelValue(greenValue, metadata) || 
+        !isValidPixelValue(blueValue, metadata)) {
         console.log(`Clicked on pixel (${x}, ${y}) with invalid values (${redValue}, ${greenValue}, ${blueValue}) - ignoring`);
         return; // Do nothing for invalid pixels
       }
