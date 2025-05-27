@@ -24,6 +24,7 @@ const ExportButton = ({ svgRef, fileName = "spectral-profile" }) => {
 
 const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
   const canvasRef = useRef(null);
+  const overlayCanvasRef = useRef(null);
   const svgRef = useRef(null);
 
   // Initialize bands from metadata or loadedBands
@@ -67,6 +68,8 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
   const [showSpectralGraph, setShowSpectralGraph] = useState(false);
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [cursorPosition, setCursorPosition] = useState(null);
+  const [editingIndex, setEditingIndex] = useState(null);
+  const [editingName, setEditingName] = useState('');
 
   const [normalizationSettings, setNormalizationSettings] = useState({
     lowerPercentile: 0.01,
@@ -271,9 +274,46 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
     }
 
     ctx.putImageData(imageData, 0, 0);
+    
+    // Update overlay canvas to match dimensions
+    if (overlayCanvasRef.current) {
+      overlayCanvasRef.current.width = samples;
+      overlayCanvasRef.current.height = lines;
+    }
   }, [currentBandData, metadata, bands, normalizationSettings]);
 
-  // Pixel click handler - now reads spectrum from file
+  // Draw pixel borders on overlay canvas
+  useEffect(() => {
+    if (!overlayCanvasRef.current || !metadata) return;
+    
+    const overlayCanvas = overlayCanvasRef.current;
+    const ctx = overlayCanvas.getContext('2d');
+    
+    // Clear the overlay
+    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    
+    // Draw borders for each pixel in spectral data
+    spectralDataArray.forEach((specData) => {
+      const { x, y } = specData.position;
+      ctx.fillStyle = specData.color;
+      
+      // Draw a 3x3 outline around the pixel, leaving center empty
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          // Skip the center pixel
+          if (dx === 0 && dy === 0) continue;
+          
+          const px = x + dx;
+          const py = y + dy;
+          
+          // Make sure we're within bounds
+          if (px >= 0 && px < metadata.samples && py >= 0 && py < metadata.lines) {
+            ctx.fillRect(px, py, 1, 1);
+          }
+        }
+      }
+    });
+  }, [spectralDataArray, metadata]);
   const handlePixelClick = useCallback(async (event) => {
     if (!dataFile || !metadata || !canvasRef.current) return;
 
@@ -305,7 +345,8 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
       const newSpectralData = {
         spectrum: pixelSpectrum,
         position: { x, y },
-        color: randomColor
+        color: randomColor,
+        name: `Pixel (${x}, ${y})`
       };
 
       setSpectralDataArray(prevArray => [...prevArray, newSpectralData]);
@@ -410,18 +451,23 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
 
   // Calculate spectral graph popup position
   const calculatePopupPosition = useCallback(() => {
-    // const graphWidth = 320;
-    const graphHeight = 240;
+    // Base height for the graph and controls
+    const baseHeight = 240; // SVG height
+    const headerHeight = 40; // Title and buttons
+    const pixelListHeight = spectralDataArray.length * 20; // 20px per pixel, no limit
+    const padding = 20;
+    
+    const totalHeight = baseHeight + headerHeight + pixelListHeight + padding;
     const left = 20;
-    const top = window.innerHeight - graphHeight - 130;
-
+    const bottom = 20;
+    
     return {
       position: 'fixed',
       left: left + 'px',
-      top: top + 'px',
+      bottom: bottom + 'px',
       zIndex: 1000
     };
-  }, []);
+  }, [spectralDataArray.length]);
 
   // Helper to get wavelength for a band
   const getWavelengthForBand = useCallback((bandNumber) => {
@@ -614,6 +660,26 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
       setSpectralDataArray(newArray);
     };
 
+    const startEditing = (index) => {
+      setEditingIndex(index);
+      setEditingName(spectralDataArray[index].name);
+    };
+
+    const saveEdit = () => {
+      if (editingIndex !== null && editingName.trim()) {
+        const newArray = [...spectralDataArray];
+        newArray[editingIndex].name = editingName.trim();
+        setSpectralDataArray(newArray);
+      }
+      setEditingIndex(null);
+      setEditingName('');
+    };
+
+    const cancelEdit = () => {
+      setEditingIndex(null);
+      setEditingName('');
+    };
+
     const handleMouseMove = (e) => {
       const svgRect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - svgRect.left;
@@ -764,7 +830,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
             transform={`rotate(-90, 15, ${paddingY + (graphHeight / 2)})`}>Digital Number (DN)</text>
         </svg>
 
-        <div className="mt-2 max-h-20 overflow-y-auto">
+        <div className="mt-2">
           {spectralDataArray.map((specData, index) => (
             <div key={`legend-${index}`} className="flex items-center justify-between text-xs mb-1">
               <div className="flex items-center">
@@ -772,14 +838,38 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
                   className="w-3 h-3 mr-1"
                   style={{ backgroundColor: specData.color }}
                 ></div>
-                <span>
-                  Pixel ({specData.position.x}, {specData.position.y})
-                  {specData.hoverPoint && ` - ${Math.round(specData.hoverPoint.value)}`}
-                </span>
+                {editingIndex === index ? (
+                  <input
+                    type="text"
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    onBlur={saveEdit}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') saveEdit();
+                      if (e.key === 'Escape') cancelEdit();
+                    }}
+                    className="text-xs border rounded px-1"
+                    autoFocus
+                  />
+                ) : (
+                  <span
+                    className="cursor-pointer hover:underline"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startEditing(index);
+                    }}
+                  >
+                    {specData.name}
+                    {specData.hoverPoint && ` - ${Math.round(specData.hoverPoint.value)}`}
+                  </span>
+                )}
               </div>
               <button
                 className="text-gray-500 hover:text-red-500 ml-2"
-                onClick={() => removeSpectrum(index)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeSpectrum(index);
+                }}
               >
                 ×
               </button>
@@ -788,7 +878,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
         </div>
       </div>
     );
-  }, [spectralDataArray, showSpectralGraph, metadata, bands, calculatePopupPosition, hoveredPoint, cursorPosition]);
+  }, [spectralDataArray, showSpectralGraph, metadata, bands, calculatePopupPosition, hoveredPoint, cursorPosition, editingIndex, editingName]);
 
   return (
     <div className="relative">
@@ -850,7 +940,6 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
             className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded"
             disabled={loadingBands}
           >
-
             Update
           </button>
         </form>
@@ -859,7 +948,19 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
       {/* Normalization controls */}
       <NormalizationControls />
 
-      <canvas ref={canvasRef} style={{ cursor: 'crosshair' }} />
+      <div className="relative">
+        <canvas ref={canvasRef} style={{ cursor: 'crosshair' }} />
+        <canvas 
+          ref={overlayCanvasRef} 
+          style={{ 
+            position: 'absolute', 
+            top: 0, 
+            left: 0, 
+            pointerEvents: 'none',
+            cursor: 'crosshair'
+          }} 
+        />
+      </div>
 
       {/* Spectral graph popup */}
       {spectralGraph}
