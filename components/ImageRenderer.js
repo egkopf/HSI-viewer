@@ -379,6 +379,11 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
     setShowSpectralGraph(false);
   };
 
+  useEffect(() => {
+    setSpectralDataArray([]);
+    setShowSpectralGraph(false);
+  }, [dataFile]); // Triggers when dataFile changes (new upload)
+
   // Handle form submission for band selection
   const handleSubmit = async (e) => {
     e.preventDefault();
