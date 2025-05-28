@@ -13,8 +13,7 @@
 !/pages/index.js
 
 !/utils/
-/utils/*
-!/utils/parseHyperspectral.js
+!/utils/*
 
 # Also don't ignore the .gitignore itself
 !.gitignore
