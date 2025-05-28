@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { parseSpecificBands, extractPixelSpectrum } from '../utils/parseHyperspectral';
+import { parseGeoTIFFBands, extractGeoTIFFPixelSpectrum } from '../utils/parseGeoTIFF';
 import { isValidPixelValue } from '../utils/dataValidation';
 
 const ExportButton = ({ svgRef, fileName = "spectral-profile" }) => {
@@ -131,7 +132,14 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
       setLoadingBands(true);
       console.log('Loading new bands:', newBandNumbers);
 
-      const newBandData = await parseSpecificBands(dataFile, metadata, newBandNumbers);
+      let newBandData;
+      if (metadata.fileType === 'geotiff') {
+        console.log('Using GeoTIFF parser for band change');
+        newBandData = await parseGeoTIFFBands(dataFile, metadata, newBandNumbers);
+      } else {
+        console.log('Using ENVI parser for band change');
+        newBandData = await parseSpecificBands(dataFile, metadata, newBandNumbers);
+      }
 
       setCurrentBandData(newBandData);
       setCurrentLoadedBands(newBandNumbers);
@@ -331,7 +339,13 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
 
     try {
       console.log(`Extracting spectrum for pixel (${x}, ${y})`);
-      const pixelSpectrum = await extractPixelSpectrum(dataFile, metadata, x, y);
+      
+      let pixelSpectrum;
+      if (metadata.fileType === 'geotiff') {
+        pixelSpectrum = await extractGeoTIFFPixelSpectrum(dataFile, metadata, x, y);
+      } else {
+        pixelSpectrum = await extractPixelSpectrum(dataFile, metadata, x, y);
+      }
 
       const validValues = pixelSpectrum.filter(point => point.value > 0);
 

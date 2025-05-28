@@ -8,14 +8,16 @@ export default function Home() {
   const [loadedBands, setLoadedBands] = useState(null);
   const [dataFile, setDataFile] = useState(null);
   const [fileName, setFileName] = useState(null);
+  const [fileType, setFileType] = useState(null);
 
-  const handleDataReady = ({ fileName, dataFile, metadata, bandData, loadedBands }) => {
+  const handleDataReady = ({ fileName, dataFile, metadata, bandData, loadedBands, fileType }) => {
     console.log('Data ready for:', fileName);
     setMetadata(metadata);
     setBandData(bandData);
     setLoadedBands(loadedBands);
     setDataFile(dataFile);
     setFileName(fileName);
+    setFileType(fileType);
   };
 
   return (
@@ -27,14 +29,12 @@ export default function Home() {
       {/* When there is data ready, display the ImageRenderer */}
       {bandData && metadata && (
         <div className="mt-4">
-          {/* <p className="mb-2 text-gray-600">
-            Loaded: {fileName} (Bands: {loadedBands?.join(', ')})
-          </p> */}
           <ImageRenderer
             bandData={bandData}
             metadata={metadata}
             loadedBands={loadedBands}
             dataFile={dataFile}
+            fileType={fileType}
           />
         </div>
       )}
