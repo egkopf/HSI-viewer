@@ -144,7 +144,34 @@ const FileUpload = ({ onDataReady }) => {
 
         {processing && (
           <div className="mt-2">
-            <p>Loading data...</p>
+            <p>Loading data
+              <span className="dot-1">.</span>
+              <span className="dot-2">.</span>
+              <span className="dot-3">.</span>
+            </p>
+            <style jsx>{`
+              .dot-1 {
+                animation: dot1 2s infinite;
+              }
+              .dot-2 {
+                animation: dot2 2s infinite;
+              }
+              .dot-3 {
+                animation: dot3 2s infinite;
+              }
+              @keyframes dot1 {
+                0%, 100% { opacity: 0; }
+                25%, 50%, 75% { opacity: 1; }
+              }
+              @keyframes dot2 {
+                0%, 25%, 100% { opacity: 0; }
+                50%, 75% { opacity: 1; }
+              }
+              @keyframes dot3 {
+                0%, 25%, 50%, 100% { opacity: 0; }
+                75% { opacity: 1; }
+              }
+            `}</style>
           </div>
         )}
       </div>

@@ -708,7 +708,8 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
           if (!specData.spectrum) return;
 
           const sortedData = [...specData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
-          const dataIndex = Math.floor(relativeX * (sortedData.length - 1));
+          const exactIndex = relativeX * (sortedData.length - 1);
+          const dataIndex = Math.round(exactIndex);
 
           if (dataIndex >= 0 && dataIndex < sortedData.length) {
             const value = sortedData[dataIndex].value;
@@ -725,7 +726,27 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
           }
         });
 
-        setHoveredPoint({ x, values: spectralDataArray.map(d => d.hoverPoint) });
+        // Calculate cursor wavelength for display
+        let cursorWavelength = null;
+        let cursorBand = null;
+        
+        if (firstSpectrum.length > 0) {
+          const sortedData = [...firstSpectrum].sort((a, b) => a.wavelength - b.wavelength);
+          const exactIndex = relativeX * (sortedData.length - 1);
+          const dataIndex = Math.round(exactIndex); // Use round instead of floor for closest point
+          
+          if (dataIndex >= 0 && dataIndex < sortedData.length) {
+            cursorWavelength = sortedData[dataIndex].wavelength;
+            cursorBand = sortedData[dataIndex].band;
+          }
+        }
+
+        setHoveredPoint({ 
+          x, 
+          values: spectralDataArray.map(d => d.hoverPoint),
+          wavelength: cursorWavelength,
+          band: cursorBand
+        });
       }
     };
 
@@ -839,6 +860,23 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
 
           {cursorPosition && (
             <line x1={cursorPosition} y1={paddingY} x2={cursorPosition} y2={paddingY + graphHeight} stroke="#999" strokeWidth="1" strokeDasharray="2,2" />
+          )}
+
+          {cursorPosition && hoveredPoint?.wavelength && (
+            <text 
+              x={cursorPosition} 
+              y={paddingY - 5} 
+              fontSize="9" 
+              textAnchor="middle" 
+              fill="#666"
+            >
+              {metadata.wavelengthValues && metadata.wavelengthValues.length > 0 
+                ? (hoveredPoint.wavelength < 10 
+                    ? `${hoveredPoint.wavelength.toFixed(2)} μm`
+                    : `${Math.round(hoveredPoint.wavelength)} nm`)
+                : `Band ${hoveredPoint.band}`
+              }
+            </text>
           )}
 
           <text x={chartWidth / 2} y={chartHeight - 5} fontSize="10" textAnchor="middle">{xAxisLabel}</text>
