@@ -38,6 +38,7 @@ export async function parseGeoTIFF(tiffFile) {
     isBigEndian: false,
     defaultBands,
     wavelengthValues,
+    fileType: 'geotiff',
     // GeoTIFF specific - try to get these safely
     tiffImage: image, // Keep reference for data reading
     geoTransform: await getGeoTransformSafely(image),
