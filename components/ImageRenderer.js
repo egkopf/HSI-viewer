@@ -22,28 +22,41 @@ const ExportButton = ({ svgRef, fileName = "spectral-profile" }) => {
       document.body.removeChild(link);
     }, 100);
   };
+
+  return (
+    <button
+      onClick={handleExport}
+      className="text-blue-500 hover:text-blue-700 text-sm mr-2"
+    >
+      Export
+    </button>
+  );
 };
 
-const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
+const ImageRenderer = ({ 
+  bandData, 
+  metadata, 
+  loadedBands, 
+  dataFile, 
+  spectralPlotPosition = "bottom-left" 
+}) => {
   const canvasRef = useRef(null);
   const overlayCanvasRef = useRef(null);
   const svgRef = useRef(null);
 
   // Initialize bands from metadata or loadedBands
   const [bands, setBands] = useState(() => {
-
-  if (loadedBands?.length >= 3) {
-    return {
-      red: loadedBands[0],
-      green: loadedBands[1], 
-      blue: loadedBands[2]
-    };
-  }
-  // Simple fallback for initial render
-  return { red: 1, green: 1, blue: 1 };
+    if (loadedBands?.length >= 3) {
+      return {
+        red: loadedBands[0],
+        green: loadedBands[1], 
+        blue: loadedBands[2]
+      };
+    }
+    return { red: 1, green: 1, blue: 1 };
   });
 
-  // Separate input state for form values (what user types) - keep as strings to allow empty/partial input
+  // Separate input state for form values
   const [inputBands, setInputBands] = useState(() => {
     if (metadata?.defaultBands) {
       return {
@@ -151,7 +164,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
     }
   }, [dataFile, metadata, currentLoadedBands]);
 
-  // Render the image data to the canvas - OPTIMIZED VERSION
+  // Render the image data to the canvas
   useEffect(() => {
     if (!currentBandData || !metadata || !canvasRef.current) return;
 
@@ -166,16 +179,14 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
     canvas.height = lines;
 
     const imageData = ctx.createImageData(samples, lines);
-    const data = imageData.data; // Direct reference to avoid repeated lookups
-
-    console.log(`Rendering bands R:${bands.red}, G:${bands.green}, B:${bands.blue}`);
+    const data = imageData.data;
 
     // Optimized band statistics calculation
     const calculateBandStats = (bandIndex) => {
       if (!currentBandData[bandIndex]) return { min: 0, max: 65535 };
 
       const values = [];
-      const skipInterval = 5; // Sample every 5th pixel instead of random
+      const skipInterval = 5;
 
       for (let line = 0; line < lines; line += skipInterval) {
         const lineData = currentBandData[bandIndex][line];
@@ -218,7 +229,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
     const greenBand = currentBandData[1];
     const blueBand = currentBandData[2];
 
-    // Fast normalization function (inline for better performance)
+    // Fast normalization function
     const fastNormalize = (value, min, range) => {
       if (!isValidPixelValue(value, metadata) || range <= 0) return 0;
 
@@ -227,7 +238,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
       return Math.floor(Math.pow(normalized, gamma) * 255);
     };
 
-    // Process pixels in chunks for better cache performance
+    // Process pixels
     let dataIndex = 0;
     
     for (let line = 0; line < lines; line++) {
@@ -235,9 +246,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
       const greenLine = greenBand[line];
       const blueLine = blueBand[line];
       
-      // Skip line if any band data is missing
       if (!redLine || !greenLine || !blueLine) {
-        // Fill with black pixels
         for (let sample = 0; sample < samples; sample++) {
           data[dataIndex++] = 0; // R
           data[dataIndex++] = 0; // G
@@ -249,7 +258,6 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
 
       const isEdgeLine = (line === 0 || line === lines - 1);
 
-      // Process samples in batches for better performance
       for (let sample = 0; sample < samples; sample++) {
         const isEdgePixel = isEdgeLine || (sample === 0 || sample === samples - 1);
         
@@ -265,7 +273,9 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
         const greenValue = greenLine[sample];
         const blueValue = blueLine[sample];
 
-        const isIgnored = !isValidPixelValue(redValue, metadata) || !isValidPixelValue(greenValue, metadata) || !isValidPixelValue(blueValue, metadata);
+        const isIgnored = !isValidPixelValue(redValue, metadata) || 
+                         !isValidPixelValue(greenValue, metadata) || 
+                         !isValidPixelValue(blueValue, metadata);
         
         if (isIgnored) {
           data[dataIndex++] = 0; // R
@@ -283,7 +293,6 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
 
     ctx.putImageData(imageData, 0, 0);
     
-    // Update overlay canvas to match dimensions
     if (overlayCanvasRef.current) {
       overlayCanvasRef.current.width = samples;
       overlayCanvasRef.current.height = lines;
@@ -297,24 +306,19 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
     const overlayCanvas = overlayCanvasRef.current;
     const ctx = overlayCanvas.getContext('2d');
     
-    // Clear the overlay
     ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
     
-    // Draw borders for each pixel in spectral data
     spectralDataArray.forEach((specData) => {
       const { x, y } = specData.position;
       ctx.fillStyle = specData.color;
       
-      // Draw a 3x3 outline around the pixel, leaving center empty
       for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
-          // Skip the center pixel
           if (dx === 0 && dy === 0) continue;
           
           const px = x + dx;
           const py = y + dy;
           
-          // Make sure we're within bounds
           if (px >= 0 && px < metadata.samples && py >= 0 && py < metadata.lines) {
             ctx.fillRect(px, py, 1, 1);
           }
@@ -322,6 +326,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
       }
     });
   }, [spectralDataArray, metadata]);
+
   const handlePixelClick = useCallback(async (event) => {
     if (!dataFile || !metadata || !canvasRef.current) return;
 
@@ -351,7 +356,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
 
       if (validValues.length === 0 || validValues.length < pixelSpectrum.length * 0.1) {
         console.log(`Pixel (${x}, ${y}) has no valid spectral data - ignoring`);
-        return; // Don't add to spectral graph
+        return;
       }
 
       const randomColor = `rgb(${Math.floor(Math.random() * 200)}, ${Math.floor(Math.random() * 200)}, ${Math.floor(Math.random() * 200)})`;
@@ -390,7 +395,6 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
         return;
       }
 
-      // Check if all RGB values are 0 or negative (ignore pixel, edge pixel, or bad data)
       const redValue = currentBandData[0]?.[y]?.[x] || 0;
       const greenValue = currentBandData[1]?.[y]?.[x] || 0;
       const blueValue = currentBandData[2]?.[y]?.[x] || 0;
@@ -398,11 +402,10 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
       if (!isValidPixelValue(redValue, metadata) || 
         !isValidPixelValue(greenValue, metadata) || 
         !isValidPixelValue(blueValue, metadata)) {
-        console.log(`Clicked on pixel (${x}, ${y}) with invalid values (${redValue}, ${greenValue}, ${blueValue}) - ignoring`);
-        return; // Do nothing for invalid pixels
+        console.log(`Clicked on pixel (${x}, ${y}) with invalid values - ignoring`);
+        return;
       }
 
-      // Proceed with original handlePixelClick logic
       await handlePixelClick(event);
     };
 
@@ -439,13 +442,12 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
   useEffect(() => {
     setSpectralDataArray([]);
     setShowSpectralGraph(false);
-  }, [dataFile]); // Triggers when dataFile changes (new upload)
+  }, [dataFile]);
 
   // Handle form submission for band selection
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // Parse the string values to numbers
     const redBand = parseInt(inputBands.red, 10);
     const greenBand = parseInt(inputBands.green, 10);
     const blueBand = parseInt(inputBands.blue, 10);
@@ -458,34 +460,43 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
 
     if (isValid) {
       const newBands = { red: redBand, green: greenBand, blue: blueBand };
-      setBands(newBands); // Update the actual bands
+      setBands(newBands);
       await loadNewBands(newBands);
     } else {
       alert(`Please enter valid band numbers between 1 and ${maxBand}`);
     }
   };
 
-  // Calculate spectral graph popup position
+  // Calculate spectral graph popup position based on prop
   const calculatePopupPosition = useCallback(() => {
-    // Base height for the graph and controls
-    const baseHeight = 240; // SVG height
-    const headerHeight = 40; // Title and buttons
-    const pixelListHeight = spectralDataArray.length * 20; // 20px per pixel, no limit
+    const baseHeight = 240;
+    const headerHeight = 40;
+    const pixelListHeight = spectralDataArray.length * 20;
     const padding = 20;
     
     const totalHeight = baseHeight + headerHeight + pixelListHeight + padding;
-    const left = 20;
-    const bottom = 20;
     
-    return {
+    let position = {
       position: 'fixed',
-      left: left + 'px',
-      bottom: bottom + 'px',
       zIndex: 1000
     };
-  }, [spectralDataArray.length]);
 
-  // Helper to get wavelength for a band
+    switch (spectralPlotPosition) {
+      case 'bottom-right':
+        position.right = '20px';
+        position.bottom = '20px';
+        break;
+      case 'bottom-left':
+      default:
+        position.left = '20px';
+        position.bottom = '20px';
+        break;
+    }
+    
+    return position;
+  }, [spectralDataArray.length, spectralPlotPosition]);
+
+  // Helper functions
   const getWavelengthForBand = useCallback((bandNumber) => {
     if (!metadata || !metadata.wavelengthValues ||
       bandNumber < 1 || bandNumber > metadata.bands) {
@@ -494,7 +505,6 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
     return metadata.wavelengthValues[bandNumber - 1];
   }, [metadata]);
 
-  // Format wavelength value for display
   const formatWavelength = useCallback((wavelength) => {
     if (wavelength === null || wavelength === undefined) return '';
 
@@ -566,7 +576,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
     </div>
   );
 
-  // Memoized spectral graph rendering (same as before but using file-extracted data)
+  // Memoized spectral graph rendering
   const spectralGraph = useMemo(() => {
     if (!showSpectralGraph || spectralDataArray.length === 0) {
       return null;
@@ -613,7 +623,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
     const xTickCount = Math.min(9, firstSpectrum.length);
     const xTicks = [];
 
-    let xAxisLabel = "Band"; // Default value
+    let xAxisLabel = "Band";
 
     if (firstSpectrum.length > 0) {
       const wavelengthValues = firstSpectrum.map(d => d.wavelength);
@@ -626,16 +636,15 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
           const wavelengthValue = minWavelength + (i / (xTickCount - 1)) * (maxWavelength - minWavelength);
           const xPosition = paddingX + (i / (xTickCount - 1)) * graphWidth;
 
-          // Format to keep under 4 digits total
           let formattedValue;
           if (wavelengthValue >= 100) {
-            formattedValue = Math.round(wavelengthValue).toString(); // "123"
+            formattedValue = Math.round(wavelengthValue).toString();
           } else if (wavelengthValue >= 10) {
-            formattedValue = wavelengthValue.toFixed(1); // "12.3"
+            formattedValue = wavelengthValue.toFixed(1);
           } else if (wavelengthValue >= 1) {
-            formattedValue = wavelengthValue.toFixed(2); // "1.23"
+            formattedValue = wavelengthValue.toFixed(2);
           } else {
-            formattedValue = wavelengthValue.toFixed(3).substring(0, 4); // "0.12" from "0.123"
+            formattedValue = wavelengthValue.toFixed(3).substring(0, 4);
           }
 
           xTicks.push({
@@ -643,7 +652,6 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
             value: formattedValue
           });
         }
-        // Set wavelength label with proper units
         xAxisLabel = maxWavelength < 10 ? "Wavelength (μm)" : "Wavelength (nm)";
       } else {
         for (let i = 0; i < xTickCount; i++) {
@@ -654,7 +662,6 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
             value: bandNum
           });
         }
-        // Keep default "Band" label
       }
     }
 
@@ -726,14 +733,13 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
           }
         });
 
-        // Calculate cursor wavelength for display
         let cursorWavelength = null;
         let cursorBand = null;
         
         if (firstSpectrum.length > 0) {
           const sortedData = [...firstSpectrum].sort((a, b) => a.wavelength - b.wavelength);
           const exactIndex = relativeX * (sortedData.length - 1);
-          const dataIndex = Math.round(exactIndex); // Use round instead of floor for closest point
+          const dataIndex = Math.round(exactIndex);
           
           if (dataIndex >= 0 && dataIndex < sortedData.length) {
             cursorWavelength = sortedData[dataIndex].wavelength;
@@ -762,7 +768,7 @@ const ImageRenderer = ({ bandData, metadata, loadedBands, dataFile }) => {
       <div className="spectral-graph fixed bg-white border border-gray-300 shadow-lg p-4" style={calculatePopupPosition()}>
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-semibold">
-            Spectral Profiles ({spectralDataArray.length} pixels)
+            Spectral Profiles ({spectralDataArray.length} pixels)&nbsp;&nbsp;
           </h3>
           <div>
             <ExportButton svgRef={svgRef} fileName={`spectral-profile-${new Date().toISOString().slice(0, 10)}`} />
