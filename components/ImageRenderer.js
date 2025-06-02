@@ -593,19 +593,36 @@ const ImageRenderer = ({
     const minValue = Math.max(0, spectrumMin * 0.9);
     const maxValue = spectrumMax * 1.1;
 
-    // Calculate global wavelength range from all images
+    // Calculate global wavelength range from all images with unit conversion
     let globalMinWavelength = Infinity;
     let globalMaxWavelength = -Infinity;
     let hasMultipleImages = false;
+    let globalUnit = 'nm'; // Default to nanometers
 
     const imageWavelengthRanges = new Map();
+
+    // Helper function to convert wavelengths to nanometers for comparison
+    const convertToNanometers = (wavelength, isInMicrometers) => {
+      return isInMicrometers ? wavelength * 1000 : wavelength;
+    };
+
+    // Helper function to detect if wavelengths are in micrometers
+    const isInMicrometers = (wavelengths) => {
+      const avgWavelength = wavelengths.reduce((sum, wl) => sum + wl, 0) / wavelengths.length;
+      return avgWavelength < 10; // If average is less than 10, likely micrometers
+    };
 
     spectralDataArray.forEach(data => {
       if (!data.spectrum || !data.metadata) return;
       
       const wavelengths = data.spectrum.map(point => point.wavelength);
-      const minWl = Math.min(...wavelengths);
-      const maxWl = Math.max(...wavelengths);
+      const isUsingMicrometers = isInMicrometers(wavelengths);
+      
+      // Convert to nanometers for global comparison
+      const wavelengthsInNm = wavelengths.map(wl => convertToNanometers(wl, isUsingMicrometers));
+      
+      const minWl = Math.min(...wavelengthsInNm);
+      const maxWl = Math.max(...wavelengthsInNm);
       
       globalMinWavelength = Math.min(globalMinWavelength, minWl);
       globalMaxWavelength = Math.max(globalMaxWavelength, maxWl);
@@ -613,25 +630,96 @@ const ImageRenderer = ({
       // Track wavelength ranges per image
       const imageKey = data.imageSource || 'single';
       if (!imageWavelengthRanges.has(imageKey)) {
-        imageWavelengthRanges.set(imageKey, { min: minWl, max: maxWl });
+        imageWavelengthRanges.set(imageKey, { 
+          min: minWl, 
+          max: maxWl, 
+          originalMin: Math.min(...wavelengths),
+          originalMax: Math.max(...wavelengths),
+          unit: isUsingMicrometers ? 'μm' : 'nm'
+        });
       }
     });
 
     // Check if we have data from multiple images
     hasMultipleImages = imageWavelengthRanges.size > 1;
 
+    // Determine best global unit for display
+    if (hasMultipleImages) {
+      const ranges = Array.from(imageWavelengthRanges.values());
+      const hasNanometers = ranges.some(r => r.unit === 'nm');
+      const hasMicrometers = ranges.some(r => r.unit === 'μm');
+      
+      // Use nanometers if we have mixed units or if global range is large
+      if ((hasNanometers && hasMicrometers) || globalMaxWavelength > 10000) {
+        globalUnit = 'nm';
+      } else if (globalMaxWavelength < 10) {
+        globalUnit = 'μm';
+        // Convert global range back to micrometers for display
+        globalMinWavelength = globalMinWavelength / 1000;
+        globalMaxWavelength = globalMaxWavelength / 1000;
+      }
+    }
+
     const bandPositions = {};
     if (metadata.wavelengthValues) {
       const wavelengths = metadata.wavelengthValues;
-      const minWavelength = hasMultipleImages ? globalMinWavelength : Math.min(...wavelengths);
-      const maxWavelength = hasMultipleImages ? globalMaxWavelength : Math.max(...wavelengths);
-      const range = maxWavelength - minWavelength;
-
-      if (range > 0) {
-        bandPositions.red = (wavelengths[bands.red - 1] - minWavelength) / range;
-        bandPositions.green = (wavelengths[bands.green - 1] - minWavelength) / range;
-        bandPositions.blue = (wavelengths[bands.blue - 1] - minWavelength) / range;
+      const currentIsInMicrometers = isInMicrometers(wavelengths);
+      
+      let minWavelength, maxWavelength, range;
+      
+      if (hasMultipleImages) {
+        // Use global range, converting current metadata to match global unit
+        if (globalUnit === 'nm' && currentIsInMicrometers) {
+          // Convert current wavelengths to nm for positioning
+          const convertedWavelengths = wavelengths.map(wl => wl * 1000);
+          minWavelength = globalMinWavelength;
+          maxWavelength = globalMaxWavelength;
+          range = maxWavelength - minWavelength;
+          
+          if (range > 0) {
+            bandPositions.red = (convertedWavelengths[bands.red - 1] - minWavelength) / range;
+            bandPositions.green = (convertedWavelengths[bands.green - 1] - minWavelength) / range;
+            bandPositions.blue = (convertedWavelengths[bands.blue - 1] - minWavelength) / range;
+          }
+        } else if (globalUnit === 'μm' && !currentIsInMicrometers) {
+          // Convert current wavelengths to μm for positioning
+          const convertedWavelengths = wavelengths.map(wl => wl / 1000);
+          minWavelength = globalMinWavelength;
+          maxWavelength = globalMaxWavelength;
+          range = maxWavelength - minWavelength;
+          
+          if (range > 0) {
+            bandPositions.red = (convertedWavelengths[bands.red - 1] - minWavelength) / range;
+            bandPositions.green = (convertedWavelengths[bands.green - 1] - minWavelength) / range;
+            bandPositions.blue = (convertedWavelengths[bands.blue - 1] - minWavelength) / range;
+          }
+        } else {
+          // Same units
+          minWavelength = globalMinWavelength;
+          maxWavelength = globalMaxWavelength;
+          range = maxWavelength - minWavelength;
+          
+          if (range > 0) {
+            bandPositions.red = (wavelengths[bands.red - 1] - minWavelength) / range;
+            bandPositions.green = (wavelengths[bands.green - 1] - minWavelength) / range;
+            bandPositions.blue = (wavelengths[bands.blue - 1] - minWavelength) / range;
+          }
+        }
       } else {
+        // Single image - use original behavior
+        minWavelength = Math.min(...wavelengths);
+        maxWavelength = Math.max(...wavelengths);
+        range = maxWavelength - minWavelength;
+
+        if (range > 0) {
+          bandPositions.red = (wavelengths[bands.red - 1] - minWavelength) / range;
+          bandPositions.green = (wavelengths[bands.green - 1] - minWavelength) / range;
+          bandPositions.blue = (wavelengths[bands.blue - 1] - minWavelength) / range;
+        }
+      }
+      
+      // Fallback if range calculation failed
+      if (range <= 0) {
         bandPositions.red = 0.75;
         bandPositions.green = 0.45;
         bandPositions.blue = 0.15;
@@ -684,7 +772,7 @@ const ImageRenderer = ({
             value: formattedValue
           });
         }
-        xAxisLabel = maxWavelength < 10 ? "Wavelength (μm)" : "Wavelength (nm)";
+        xAxisLabel = hasMultipleImages ? `Wavelength (${globalUnit})` : (maxWavelength < 10 ? "Wavelength (μm)" : "Wavelength (nm)");
       } else {
         for (let i = 0; i < xTickCount; i++) {
           const bandNum = Math.floor(1 + i * (firstSpectrum.length - 1) / (xTickCount - 1));
@@ -760,14 +848,23 @@ const ImageRenderer = ({
           if (!specData.spectrum) return;
 
           const sortedData = [...specData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
+          const spectrumIsInMicrometers = isInMicrometers(sortedData.map(d => d.wavelength));
           
           if (hasMultipleImages && globalWavelength) {
-            // Find closest wavelength in this spectrum to the global cursor position
+            // Convert global wavelength to spectrum's units for comparison
+            let targetWavelength = globalWavelength;
+            if (globalUnit === 'nm' && spectrumIsInMicrometers) {
+              targetWavelength = globalWavelength / 1000; // Convert nm to μm
+            } else if (globalUnit === 'μm' && !spectrumIsInMicrometers) {
+              targetWavelength = globalWavelength * 1000; // Convert μm to nm
+            }
+            
+            // Find closest wavelength in this spectrum to the target
             let closestIndex = 0;
-            let minDiff = Math.abs(sortedData[0].wavelength - globalWavelength);
+            let minDiff = Math.abs(sortedData[0].wavelength - targetWavelength);
             
             for (let i = 1; i < sortedData.length; i++) {
-              const diff = Math.abs(sortedData[i].wavelength - globalWavelength);
+              const diff = Math.abs(sortedData[i].wavelength - targetWavelength);
               if (diff < minDiff) {
                 minDiff = diff;
                 closestIndex = i;
@@ -779,8 +876,15 @@ const ImageRenderer = ({
               const wavelength = sortedData[closestIndex].wavelength;
               
               // Calculate x position based on global scale
+              let wavelengthInGlobalUnits = wavelength;
+              if (globalUnit === 'nm' && spectrumIsInMicrometers) {
+                wavelengthInGlobalUnits = wavelength * 1000;
+              } else if (globalUnit === 'μm' && !spectrumIsInMicrometers) {
+                wavelengthInGlobalUnits = wavelength / 1000;
+              }
+              
               const globalRange = globalMaxWavelength - globalMinWavelength;
-              const xPos = paddingX + ((wavelength - globalMinWavelength) / globalRange) * graphWidth;
+              const xPos = paddingX + ((wavelengthInGlobalUnits - globalMinWavelength) / globalRange) * graphWidth;
               const yPos = paddingY + graphHeight - ((value - minValue) / (maxValue - minValue) * graphHeight);
 
               specData.hoverPoint = {
@@ -913,10 +1017,21 @@ const ImageRenderer = ({
 
             let points;
             if (hasMultipleImages) {
-              // Scale each spectrum to the global wavelength range
+              // Scale each spectrum to the global wavelength range with unit conversion
+              const spectrumWavelengths = sortedData.map(d => d.wavelength);
+              const spectrumIsInMicrometers = isInMicrometers(spectrumWavelengths);
+              
               points = sortedData.map((point) => {
+                // Convert wavelength to global units if needed
+                let wavelengthInGlobalUnits = point.wavelength;
+                if (globalUnit === 'nm' && spectrumIsInMicrometers) {
+                  wavelengthInGlobalUnits = point.wavelength * 1000; // μm to nm
+                } else if (globalUnit === 'μm' && !spectrumIsInMicrometers) {
+                  wavelengthInGlobalUnits = point.wavelength / 1000; // nm to μm
+                }
+                
                 const globalRange = globalMaxWavelength - globalMinWavelength;
-                const x = paddingX + ((point.wavelength - globalMinWavelength) / globalRange) * graphWidth;
+                const x = paddingX + ((wavelengthInGlobalUnits - globalMinWavelength) / globalRange) * graphWidth;
                 const y = paddingY + graphHeight - ((point.value - minValue) / (maxValue - minValue) * graphHeight);
                 return `${x},${y}`;
               }).join(' ');
