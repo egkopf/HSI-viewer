@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { parseSpecificBands, extractPixelSpectrum } from '../utils/parseHyperspectral';
 import { parseGeoTIFFBands, extractGeoTIFFPixelSpectrum } from '../utils/parseGeoTIFF';
 import { isValidPixelValue } from '../utils/dataValidation';
+import { useSharedSpectral } from '../utils/sharedSpectralContent';
 
 const ExportButton = ({ svgRef, fileName = "spectral-profile" }) => {
   const handleExport = () => {
@@ -38,11 +39,21 @@ const ImageRenderer = ({
   metadata, 
   loadedBands, 
   dataFile, 
-  spectralPlotPosition = "bottom-left" 
+  enableSharedSpectral = false,
+  isMainSpectralDisplay = true
 }) => {
   const canvasRef = useRef(null);
   const overlayCanvasRef = useRef(null);
   const svgRef = useRef(null);
+
+  // Always call the hook, but conditionally use its values
+  const sharedContext = useSharedSpectral();
+  const [localSpectralData, setLocalSpectralData] = useState([]);
+  const [localShowSpectral, setLocalShowSpectral] = useState(false);
+
+  const spectralDataArray = enableSharedSpectral ? sharedContext.sharedSpectralData : localSpectralData;
+  const showSpectralGraph = enableSharedSpectral ? sharedContext.showSharedSpectralGraph : localShowSpectral;
+  const setShowSpectralGraph = enableSharedSpectral ? sharedContext.setShowSharedSpectralGraph : setLocalShowSpectral;
 
   // Initialize bands from metadata or loadedBands
   const [bands, setBands] = useState(() => {
@@ -79,8 +90,6 @@ const ImageRenderer = ({
   const [currentLoadedBands, setCurrentLoadedBands] = useState(loadedBands);
   const [loadingBands, setLoadingBands] = useState(false);
 
-  const [spectralDataArray, setSpectralDataArray] = useState([]);
-  const [showSpectralGraph, setShowSpectralGraph] = useState(false);
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [cursorPosition, setCursorPosition] = useState(null);
   const [editingIndex, setEditingIndex] = useState(null);
@@ -164,7 +173,7 @@ const ImageRenderer = ({
     }
   }, [dataFile, metadata, currentLoadedBands]);
 
-  // Render the image data to the canvas
+  // Render the image data to the canvas (same as before - unchanged)
   useEffect(() => {
     if (!currentBandData || !metadata || !canvasRef.current) return;
 
@@ -368,15 +377,19 @@ const ImageRenderer = ({
         name: `Pixel (${x}, ${y})`
       };
 
-      setSpectralDataArray(prevArray => [...prevArray, newSpectralData]);
-      setShowSpectralGraph(true);
+      if (enableSharedSpectral) {
+        sharedContext.addSpectralData(newSpectralData);
+      } else {
+        setLocalSpectralData(prevArray => [...prevArray, newSpectralData]);
+        setLocalShowSpectral(true);
+      }
     } catch (error) {
       console.error('Error extracting pixel spectrum:', error);
       alert('Failed to extract spectral data: ' + error.message);
     }
-  }, [dataFile, metadata]);
+  }, [dataFile, metadata, enableSharedSpectral, sharedContext]);
 
-  // Set up event listeners
+  // Set up event listeners (same as before)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -435,16 +448,24 @@ const ImageRenderer = ({
   }, [showSpectralGraph]);
 
   const clearAllSpectra = () => {
-    setSpectralDataArray([]);
-    setShowSpectralGraph(false);
+    if (enableSharedSpectral) {
+      sharedContext.clearAllSpectralData();
+    } else {
+      setLocalSpectralData([]);
+      setLocalShowSpectral(false);
+    }
   };
 
   useEffect(() => {
-    setSpectralDataArray([]);
-    setShowSpectralGraph(false);
+    if (enableSharedSpectral) {
+      sharedContext.clearAllSpectralData();
+    } else {
+      setLocalSpectralData([]);
+      setLocalShowSpectral(false);
+    }
   }, [dataFile]);
 
-  // Handle form submission for band selection
+  // Handle form submission for band selection (same as before)
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -467,36 +488,7 @@ const ImageRenderer = ({
     }
   };
 
-  // Calculate spectral graph popup position based on prop
-  const calculatePopupPosition = useCallback(() => {
-    const baseHeight = 240;
-    const headerHeight = 40;
-    const pixelListHeight = spectralDataArray.length * 20;
-    const padding = 20;
-    
-    const totalHeight = baseHeight + headerHeight + pixelListHeight + padding;
-    
-    let position = {
-      position: 'fixed',
-      zIndex: 1000
-    };
-
-    switch (spectralPlotPosition) {
-      case 'bottom-right':
-        position.right = '20px';
-        position.bottom = '20px';
-        break;
-      case 'bottom-left':
-      default:
-        position.left = '20px';
-        position.bottom = '20px';
-        break;
-    }
-    
-    return position;
-  }, [spectralDataArray.length, spectralPlotPosition]);
-
-  // Helper functions
+  // Helper functions (same as before)
   const getWavelengthForBand = useCallback((bandNumber) => {
     if (!metadata || !metadata.wavelengthValues ||
       bandNumber < 1 || bandNumber > metadata.bands) {
@@ -514,7 +506,7 @@ const ImageRenderer = ({
     return `${Math.round(wavelength)} nm`;
   }, []);
 
-  // Normalization Controls component
+  // Normalization Controls component (same as before)
   const NormalizationControls = () => (
     <div className="mt-4 p-4 bg-gray-50 rounded-lg">
       <h4 className="font-semibold mb-2">Image Enhancement Controls</h4>
@@ -576,9 +568,12 @@ const ImageRenderer = ({
     </div>
   );
 
-  // Memoized spectral graph rendering
+  // Only render spectral graph on the main display
+  const shouldShowSpectralGraph = isMainSpectralDisplay && showSpectralGraph && spectralDataArray.length > 0;
+
+  // Simplified spectral graph (keeping your existing implementation but only showing on main display)
   const spectralGraph = useMemo(() => {
-    if (!showSpectralGraph || spectralDataArray.length === 0) {
+    if (!shouldShowSpectralGraph) {
       return null;
     }
 
@@ -678,9 +673,13 @@ const ImageRenderer = ({
     }
 
     const removeSpectrum = (index) => {
-      const newArray = [...spectralDataArray];
-      newArray.splice(index, 1);
-      setSpectralDataArray(newArray);
+      if (enableSharedSpectral) {
+        sharedContext.removeSpectralData(index);
+      } else {
+        const newArray = [...spectralDataArray];
+        newArray.splice(index, 1);
+        setLocalSpectralData(newArray);
+      }
     };
 
     const startEditing = (index) => {
@@ -690,9 +689,13 @@ const ImageRenderer = ({
 
     const saveEdit = () => {
       if (editingIndex !== null && editingName.trim()) {
-        const newArray = [...spectralDataArray];
-        newArray[editingIndex].name = editingName.trim();
-        setSpectralDataArray(newArray);
+        if (enableSharedSpectral) {
+          sharedContext.updateSpectralData(editingIndex, { name: editingName.trim() });
+        } else {
+          const newArray = [...spectralDataArray];
+          newArray[editingIndex].name = editingName.trim();
+          setLocalSpectralData(newArray);
+        }
       }
       setEditingIndex(null);
       setEditingName('');
@@ -765,7 +768,7 @@ const ImageRenderer = ({
     };
 
     return (
-      <div className="spectral-graph fixed bg-white border border-gray-300 shadow-lg p-4" style={calculatePopupPosition()}>
+      <div className="spectral-graph fixed bg-white border border-gray-300 shadow-lg p-4" style={{ left: '20px', bottom: '20px', zIndex: 1000 }}>
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-semibold">
             Spectral Profiles ({spectralDataArray.length} pixels)&nbsp;&nbsp;
@@ -938,7 +941,7 @@ const ImageRenderer = ({
         </div>
       </div>
     );
-  }, [spectralDataArray, showSpectralGraph, metadata, bands, calculatePopupPosition, hoveredPoint, cursorPosition, editingIndex, editingName]);
+  }, [spectralDataArray, shouldShowSpectralGraph, metadata, bands, hoveredPoint, cursorPosition, editingIndex, editingName, enableSharedSpectral, sharedContext]);
 
   return (
     <div className="relative">
@@ -1022,7 +1025,7 @@ const ImageRenderer = ({
         />
       </div>
 
-      {/* Spectral graph popup */}
+      {/* Spectral graph popup - only show on main display */}
       {spectralGraph}
     </div>
   );
