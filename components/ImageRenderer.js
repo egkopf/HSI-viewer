@@ -375,7 +375,8 @@ const ImageRenderer = ({
         position: { x, y },
         color: randomColor,
         name: `Pixel (${x}, ${y})`,
-        imageSource: enableSharedSpectral ? (isMainSpectralDisplay ? 'img 1' : 'img 2') : null
+        imageSource: enableSharedSpectral ? (isMainSpectralDisplay ? 'img 1' : 'img 2') : null,
+        metadata: metadata // Store metadata to access wavelength info later
       };
 
       if (enableSharedSpectral) {
@@ -592,16 +593,49 @@ const ImageRenderer = ({
     const minValue = Math.max(0, spectrumMin * 0.9);
     const maxValue = spectrumMax * 1.1;
 
+    // Calculate global wavelength range from all images
+    let globalMinWavelength = Infinity;
+    let globalMaxWavelength = -Infinity;
+    let hasMultipleImages = false;
+
+    const imageWavelengthRanges = new Map();
+
+    spectralDataArray.forEach(data => {
+      if (!data.spectrum || !data.metadata) return;
+      
+      const wavelengths = data.spectrum.map(point => point.wavelength);
+      const minWl = Math.min(...wavelengths);
+      const maxWl = Math.max(...wavelengths);
+      
+      globalMinWavelength = Math.min(globalMinWavelength, minWl);
+      globalMaxWavelength = Math.max(globalMaxWavelength, maxWl);
+      
+      // Track wavelength ranges per image
+      const imageKey = data.imageSource || 'single';
+      if (!imageWavelengthRanges.has(imageKey)) {
+        imageWavelengthRanges.set(imageKey, { min: minWl, max: maxWl });
+      }
+    });
+
+    // Check if we have data from multiple images
+    hasMultipleImages = imageWavelengthRanges.size > 1;
+
     const bandPositions = {};
     if (metadata.wavelengthValues) {
       const wavelengths = metadata.wavelengthValues;
-      const minWavelength = Math.min(...wavelengths);
-      const maxWavelength = Math.max(...wavelengths);
+      const minWavelength = hasMultipleImages ? globalMinWavelength : Math.min(...wavelengths);
+      const maxWavelength = hasMultipleImages ? globalMaxWavelength : Math.max(...wavelengths);
       const range = maxWavelength - minWavelength;
 
-      bandPositions.red = (wavelengths[bands.red - 1] - minWavelength) / range;
-      bandPositions.green = (wavelengths[bands.green - 1] - minWavelength) / range;
-      bandPositions.blue = (wavelengths[bands.blue - 1] - minWavelength) / range;
+      if (range > 0) {
+        bandPositions.red = (wavelengths[bands.red - 1] - minWavelength) / range;
+        bandPositions.green = (wavelengths[bands.green - 1] - minWavelength) / range;
+        bandPositions.blue = (wavelengths[bands.blue - 1] - minWavelength) / range;
+      } else {
+        bandPositions.red = 0.75;
+        bandPositions.green = 0.45;
+        bandPositions.blue = 0.15;
+      }
     } else {
       bandPositions.red = (bands.red - 1) / (metadata.bands - 1);
       bandPositions.green = (bands.green - 1) / (metadata.bands - 1);
@@ -615,6 +649,7 @@ const ImageRenderer = ({
     const graphWidth = chartWidth - (paddingX * 2);
     const graphHeight = chartHeight - (paddingY * 2);
 
+    // Use global wavelength range for x-axis ticks when multiple images
     const firstSpectrum = spectralDataArray[0]?.spectrum || [];
     const xTickCount = Math.min(9, firstSpectrum.length);
     const xTicks = [];
@@ -622,10 +657,11 @@ const ImageRenderer = ({
     let xAxisLabel = "Band";
 
     if (firstSpectrum.length > 0) {
-      const wavelengthValues = firstSpectrum.map(d => d.wavelength);
-      const minWavelength = Math.min(...wavelengthValues);
-      const maxWavelength = Math.max(...wavelengthValues);
-      const hasRealWavelengthData = metadata.wavelengthValues && metadata.wavelengthValues.length > 0;
+      const minWavelength = hasMultipleImages ? globalMinWavelength : Math.min(...firstSpectrum.map(d => d.wavelength));
+      const maxWavelength = hasMultipleImages ? globalMaxWavelength : Math.max(...firstSpectrum.map(d => d.wavelength));
+      const hasRealWavelengthData = spectralDataArray.some(data => 
+        data.metadata?.wavelengthValues && data.metadata.wavelengthValues.length > 0
+      );
 
       if (hasRealWavelengthData) {
         for (let i = 0; i < xTickCount; i++) {
@@ -715,32 +751,70 @@ const ImageRenderer = ({
         setCursorPosition(x);
         const relativeX = (x - paddingX) / graphWidth;
 
+        // Convert relative x to global wavelength
+        const globalWavelength = hasMultipleImages 
+          ? globalMinWavelength + relativeX * (globalMaxWavelength - globalMinWavelength)
+          : null;
+
         spectralDataArray.forEach((specData) => {
           if (!specData.spectrum) return;
 
           const sortedData = [...specData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
-          const exactIndex = relativeX * (sortedData.length - 1);
-          const dataIndex = Math.round(exactIndex);
+          
+          if (hasMultipleImages && globalWavelength) {
+            // Find closest wavelength in this spectrum to the global cursor position
+            let closestIndex = 0;
+            let minDiff = Math.abs(sortedData[0].wavelength - globalWavelength);
+            
+            for (let i = 1; i < sortedData.length; i++) {
+              const diff = Math.abs(sortedData[i].wavelength - globalWavelength);
+              if (diff < minDiff) {
+                minDiff = diff;
+                closestIndex = i;
+              }
+            }
+            
+            if (closestIndex >= 0 && closestIndex < sortedData.length) {
+              const value = sortedData[closestIndex].value;
+              const wavelength = sortedData[closestIndex].wavelength;
+              
+              // Calculate x position based on global scale
+              const globalRange = globalMaxWavelength - globalMinWavelength;
+              const xPos = paddingX + ((wavelength - globalMinWavelength) / globalRange) * graphWidth;
+              const yPos = paddingY + graphHeight - ((value - minValue) / (maxValue - minValue) * graphHeight);
 
-          if (dataIndex >= 0 && dataIndex < sortedData.length) {
-            const value = sortedData[dataIndex].value;
-            const wavelength = sortedData[dataIndex].wavelength;
-            const xPos = paddingX + (dataIndex / (sortedData.length - 1)) * graphWidth;
-            const yPos = paddingY + graphHeight - ((value - minValue) / (maxValue - minValue) * graphHeight);
+              specData.hoverPoint = {
+                value,
+                wavelength,
+                x: xPos,
+                y: yPos
+              };
+            }
+          } else {
+            // Original behavior for single image
+            const exactIndex = relativeX * (sortedData.length - 1);
+            const dataIndex = Math.round(exactIndex);
 
-            specData.hoverPoint = {
-              value,
-              wavelength,
-              x: xPos,
-              y: yPos
-            };
+            if (dataIndex >= 0 && dataIndex < sortedData.length) {
+              const value = sortedData[dataIndex].value;
+              const wavelength = sortedData[dataIndex].wavelength;
+              const xPos = paddingX + (dataIndex / (sortedData.length - 1)) * graphWidth;
+              const yPos = paddingY + graphHeight - ((value - minValue) / (maxValue - minValue) * graphHeight);
+
+              specData.hoverPoint = {
+                value,
+                wavelength,
+                x: xPos,
+                y: yPos
+              };
+            }
           }
         });
 
-        let cursorWavelength = null;
+        let cursorWavelength = globalWavelength;
         let cursorBand = null;
         
-        if (firstSpectrum.length > 0) {
+        if (!hasMultipleImages && firstSpectrum.length > 0) {
           const sortedData = [...firstSpectrum].sort((a, b) => a.wavelength - b.wavelength);
           const exactIndex = relativeX * (sortedData.length - 1);
           const dataIndex = Math.round(exactIndex);
@@ -837,11 +911,23 @@ const ImageRenderer = ({
 
             const sortedData = [...specData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
 
-            const points = sortedData.map((point, index) => {
-              const x = paddingX + (index / (sortedData.length - 1)) * graphWidth;
-              const y = paddingY + graphHeight - ((point.value - minValue) / (maxValue - minValue) * graphHeight);
-              return `${x},${y}`;
-            }).join(' ');
+            let points;
+            if (hasMultipleImages) {
+              // Scale each spectrum to the global wavelength range
+              points = sortedData.map((point) => {
+                const globalRange = globalMaxWavelength - globalMinWavelength;
+                const x = paddingX + ((point.wavelength - globalMinWavelength) / globalRange) * graphWidth;
+                const y = paddingY + graphHeight - ((point.value - minValue) / (maxValue - minValue) * graphHeight);
+                return `${x},${y}`;
+              }).join(' ');
+            } else {
+              // Original behavior for single image
+              points = sortedData.map((point, index) => {
+                const x = paddingX + (index / (sortedData.length - 1)) * graphWidth;
+                const y = paddingY + graphHeight - ((point.value - minValue) / (maxValue - minValue) * graphHeight);
+                return `${x},${y}`;
+              }).join(' ');
+            }
 
             return (
               <React.Fragment key={`spectrum-${specIndex}`}>
@@ -880,7 +966,7 @@ const ImageRenderer = ({
               textAnchor="middle" 
               fill="#666"
             >
-              {metadata.wavelengthValues && metadata.wavelengthValues.length > 0 
+              {spectralDataArray.some(data => data.metadata?.wavelengthValues && data.metadata.wavelengthValues.length > 0)
                 ? (hoveredPoint.wavelength < 10 
                     ? `${hoveredPoint.wavelength.toFixed(2)} μm`
                     : `${Math.round(hoveredPoint.wavelength)} nm`)
@@ -946,6 +1032,7 @@ const ImageRenderer = ({
       </div>
     );
   }, [spectralDataArray, shouldShowSpectralGraph, metadata, bands, hoveredPoint, cursorPosition, editingIndex, editingName, enableSharedSpectral, sharedContext]);
+
 
   return (
     <div className="relative">
