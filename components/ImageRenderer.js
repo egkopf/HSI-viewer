@@ -374,7 +374,8 @@ const ImageRenderer = ({
         spectrum: pixelSpectrum,
         position: { x, y },
         color: randomColor,
-        name: `Pixel (${x}, ${y})`
+        name: `Pixel (${x}, ${y})`,
+        imageSource: enableSharedSpectral ? (isMainSpectralDisplay ? 'img 1' : 'img 2') : null
       };
 
       if (enableSharedSpectral) {
@@ -922,6 +923,9 @@ const ImageRenderer = ({
                       startEditing(index);
                     }}
                   >
+                    {specData.imageSource && (
+                      <span className="text-gray-500 text-xs mr-1">[{specData.imageSource}]</span>
+                    )}
                     {specData.name}
                     {specData.hoverPoint && ` - ${Math.round(specData.hoverPoint.value)}`}
                   </span>
