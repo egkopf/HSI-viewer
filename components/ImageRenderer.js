@@ -852,6 +852,10 @@ const ImageRenderer = ({
           const sortedData = [...specData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
           const spectrumIsInMicrometers = isInMicrometers(sortedData.map(d => d.wavelength));
           
+          // Get the actual wavelength range for this specific spectrum
+          const spectrumMinWl = Math.min(...sortedData.map(d => d.wavelength));
+          const spectrumMaxWl = Math.max(...sortedData.map(d => d.wavelength));
+          
           if (hasMultipleImages && globalWavelength) {
             // Convert global wavelength to spectrum's units for comparison
             let targetWavelength = globalWavelength;
@@ -859,6 +863,13 @@ const ImageRenderer = ({
               targetWavelength = globalWavelength / 1000; // Convert nm to μm
             } else if (globalUnit === 'μm' && !spectrumIsInMicrometers) {
               targetWavelength = globalWavelength * 1000; // Convert μm to nm
+            }
+            
+            // Check if the target wavelength is within this spectrum's actual range
+            if (targetWavelength < spectrumMinWl || targetWavelength > spectrumMaxWl) {
+              // Clear hover point for this spectrum if outside its range
+              specData.hoverPoint = null;
+              return;
             }
             
             // Find closest wavelength in this spectrum to the target
@@ -917,6 +928,11 @@ const ImageRenderer = ({
           }
         });
 
+        // Filter out spectra that don't have valid hover points for the legend display
+        const validHoverPoints = spectralDataArray
+          .map(d => d.hoverPoint)
+          .filter(point => point !== null && point !== undefined);
+
         let cursorWavelength = globalWavelength;
         let cursorBand = null;
         
@@ -931,12 +947,17 @@ const ImageRenderer = ({
           }
         }
 
-        setHoveredPoint({ 
-          x, 
-          values: spectralDataArray.map(d => d.hoverPoint),
-          wavelength: cursorWavelength,
-          band: cursorBand
-        });
+        // Only set hover point if we have at least one valid hover point
+        if (validHoverPoints.length > 0) {
+          setHoveredPoint({ 
+            x, 
+            values: spectralDataArray.map(d => d.hoverPoint),
+            wavelength: cursorWavelength,
+            band: cursorBand
+          });
+        } else {
+          setHoveredPoint(null);
+        }
       }
     };
 
