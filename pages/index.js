@@ -69,35 +69,42 @@ export default function Home() {
         <h1 className="text-2xl font-bold mb-4">Hyperspectral Data Viewer</h1>
 
         {/* File Upload Section */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div className="border rounded-lg p-4">
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="font-semibold">File 1 {fileName1 && `(${fileName1})`}</h3>
-              {hasFile1 && (
-                <button 
-                  onClick={() => clearFile(1)}
-                  className="text-red-500 hover:text-red-700 text-sm"
-                >
-                  Clear
-                </button>
-              )}
+        <div className="border rounded-lg p-4 mb-4">
+          <h3 className="font-semibold mb-2">Upload Files</h3>
+          <p className="text-sm text-gray-500 mb-4">
+            Upload ENVI files (.hdr + data file) or GeoTIFF files (.tif/.tiff)
+          </p>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4">
+              <div className="flex justify-between items-center mb-2">
+                <h4 className="font-medium">File 1 {fileName1 && `(${fileName1})`}</h4>
+                {hasFile1 && (
+                  <button 
+                    onClick={() => clearFile(1)}
+                    className="text-red-500 hover:text-red-700 text-sm"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <FileUpload onDataReady={(data) => handleDataReady(data, 1)} />
             </div>
-            <FileUpload onDataReady={(data) => handleDataReady(data, 1)} />
-          </div>
 
-          <div className="border rounded-lg p-4">
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="font-semibold">File 2 {fileName2 && `(${fileName2})`}</h3>
-              {hasFile2 && (
-                <button 
-                  onClick={() => clearFile(2)}
-                  className="text-red-500 hover:text-red-700 text-sm"
-                >
-                  Clear
-                </button>
-              )}
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4">
+              <div className="flex justify-between items-center mb-2">
+                <h4 className="font-medium">File 2 {fileName2 && `(${fileName2})`}</h4>
+                {hasFile2 && (
+                  <button 
+                    onClick={() => clearFile(2)}
+                    className="text-red-500 hover:text-red-700 text-sm"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <FileUpload onDataReady={(data) => handleDataReady(data, 2)} />
             </div>
-            <FileUpload onDataReady={(data) => handleDataReady(data, 2)} />
           </div>
         </div>
 

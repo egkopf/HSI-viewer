@@ -510,12 +510,13 @@ const ImageRenderer = ({
 
   // Normalization Controls component (same as before)
   const NormalizationControls = () => (
-    <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-      <h4 className="font-semibold mb-2">Image Enhancement Controls</h4>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+  <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+    <h4 className="font-semibold mb-2 text-sm">Image Enhancement</h4>
+    <div className="grid grid-cols-1 gap-3">
+      <div className="grid grid-cols-3 gap-2">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Lower Cutoff ({Math.round(normalizationSettings.lowerPercentile * 100)}%)
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            Lower ({Math.round(normalizationSettings.lowerPercentile * 100)}%)
           </label>
           <input
             type="range"
@@ -527,13 +528,13 @@ const ImageRenderer = ({
               ...normalizationSettings,
               lowerPercentile: Number(e.target.value) / 100
             })}
-            className="w-full"
+            className="w-full h-2"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Upper Cutoff ({Math.round(normalizationSettings.upperPercentile * 100)}%)
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            Upper ({Math.round(normalizationSettings.upperPercentile * 100)}%)
           </label>
           <input
             type="range"
@@ -545,12 +546,12 @@ const ImageRenderer = ({
               ...normalizationSettings,
               upperPercentile: Number(e.target.value) / 100
             })}
-            className="w-full"
+            className="w-full h-2"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-xs font-medium text-gray-700 mb-1">
             Gamma ({normalizationSettings.gamma.toFixed(2)})
           </label>
           <input
@@ -563,12 +564,13 @@ const ImageRenderer = ({
               ...normalizationSettings,
               gamma: Number(e.target.value)
             })}
-            className="w-full"
+            className="w-full h-2"
           />
         </div>
       </div>
     </div>
-  );
+  </div>
+);
 
   // Only render spectral graph on the main display
   const shouldShowSpectralGraph = isMainSpectralDisplay && showSpectralGraph && spectralDataArray.length > 0;
@@ -1062,12 +1064,28 @@ const ImageRenderer = ({
             );
           })}
 
-          <line x1={paddingX + (bandPositions.red * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.red * graphWidth)}
-            y2={paddingY + graphHeight} stroke="rgba(255, 0, 0, 0.7)" strokeWidth="1" strokeDasharray="4,2" />
-          <line x1={paddingX + (bandPositions.green * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.green * graphWidth)}
-            y2={paddingY + graphHeight} stroke="rgba(0, 180, 0, 0.7)" strokeWidth="1" strokeDasharray="4,2" />
-          <line x1={paddingX + (bandPositions.blue * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.blue * graphWidth)}
-            y2={paddingY + graphHeight} stroke="rgba(0, 0, 255, 0.7)" strokeWidth="1" strokeDasharray="4,2" />
+                      {(() => {
+              // Check if we have pixels from multiple images
+              const imageSourcesWithPixels = new Set(
+                spectralDataArray.map(data => data.imageSource).filter(source => source)
+              );
+              const hasMultipleImagePixels = imageSourcesWithPixels.size > 1;
+              
+              // Only show RGB bands if we don't have pixels from multiple images
+              if (!hasMultipleImagePixels) {
+                return (
+                  <React.Fragment>
+                    <line x1={paddingX + (bandPositions.red * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.red * graphWidth)}
+                      y2={paddingY + graphHeight} stroke="rgba(255, 0, 0, 0.7)" strokeWidth="1" strokeDasharray="4,2" />
+                    <line x1={paddingX + (bandPositions.green * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.green * graphWidth)}
+                      y2={paddingY + graphHeight} stroke="rgba(0, 180, 0, 0.7)" strokeWidth="1" strokeDasharray="4,2" />
+                    <line x1={paddingX + (bandPositions.blue * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.blue * graphWidth)}
+                      y2={paddingY + graphHeight} stroke="rgba(0, 0, 255, 0.7)" strokeWidth="1" strokeDasharray="4,2" />
+                  </React.Fragment>
+                );
+              }
+              return null;
+            })()}
 
           {cursorPosition && (
             <line x1={cursorPosition} y1={paddingY} x2={cursorPosition} y2={paddingY + graphHeight} stroke="#999" strokeWidth="1" strokeDasharray="2,2" />
@@ -1152,61 +1170,61 @@ const ImageRenderer = ({
   return (
     <div className="relative">
       {/* Band Selection Controls */}
-      <div className="mb-4 p-4 bg-gray-50 rounded-lg">
-        <h4 className="font-semibold mb-2">Band Selection</h4>
-        {loadingBands && <p className="text-blue-600 mb-2">Loading new bands...</p>}
-        <form onSubmit={handleSubmit} className="flex gap-4">
+      <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+        <h4 className="font-semibold mb-2 text-sm">Band Selection</h4>
+        {loadingBands && <p className="text-blue-600 mb-2 text-xs">Loading new bands...</p>}
+        <form onSubmit={handleSubmit} className="flex gap-2 flex-wrap">
           <div className="flex items-center">
-            <label className="mr-2 font-medium text-red-600">R:</label>
+            <label className="mr-1 font-medium text-red-600 text-xs">R:</label>
             <input
               type="number"
               name="red"
-              className="border rounded px-2 py-1 w-16"
+              className="border rounded px-1 py-1 w-12 text-xs"
               value={inputBands.red}
               onChange={(e) => setInputBands({ ...inputBands, red: e.target.value })}
               min="1"
               max={metadata?.bands || 100}
               disabled={loadingBands}
             />
-            <span className="ml-2 text-sm text-red-600">
+            <span className="ml-1 text-xs text-red-600">
               {formatWavelength(getWavelengthForBand(bands.red))}
             </span>
           </div>
           <div className="flex items-center">
-            <label className="mr-2 font-medium text-green-600">G:</label>
+            <label className="mr-1 font-medium text-green-600 text-xs">G:</label>
             <input
               type="number"
               name="green"
-              className="border rounded px-2 py-1 w-16"
+              className="border rounded px-1 py-1 w-12 text-xs"
               value={inputBands.green}
               onChange={(e) => setInputBands({ ...inputBands, green: e.target.value })}
               min="1"
               max={metadata?.bands || 100}
               disabled={loadingBands}
             />
-            <span className="ml-2 text-sm text-green-600">
+            <span className="ml-1 text-xs text-green-600">
               {formatWavelength(getWavelengthForBand(bands.green))}
             </span>
           </div>
           <div className="flex items-center">
-            <label className="mr-2 font-medium text-blue-600">B:</label>
+            <label className="mr-1 font-medium text-blue-600 text-xs">B:</label>
             <input
               type="number"
               name="blue"
-              className="border rounded px-2 py-1 w-16"
+              className="border rounded px-1 py-1 w-12 text-xs"
               value={inputBands.blue}
               onChange={(e) => setInputBands({ ...inputBands, blue: e.target.value })}
               min="1"
               max={metadata?.bands || 100}
               disabled={loadingBands}
             />
-            <span className="ml-2 text-sm text-blue-600">
+            <span className="ml-1 text-xs text-blue-600">
               {formatWavelength(getWavelengthForBand(bands.blue))}
             </span>
           </div>
           <button
             type="submit"
-            className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded"
+            className="bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded text-xs"
             disabled={loadingBands}
           >
             Update
@@ -1218,18 +1236,29 @@ const ImageRenderer = ({
       <NormalizationControls />
 
       <div className="relative">
-        <canvas ref={canvasRef} style={{ cursor: 'crosshair' }} />
-        <canvas 
-          ref={overlayCanvasRef} 
-          style={{ 
-            position: 'absolute', 
-            top: 0, 
-            left: 0, 
-            pointerEvents: 'none',
-            cursor: 'crosshair'
-          }} 
-        />
-      </div>
+  <canvas 
+    ref={canvasRef} 
+    style={{ 
+      cursor: 'crosshair',
+      maxWidth: '100%',
+      height: 'auto',
+      display: 'block'
+    }} 
+  />
+  <canvas 
+    ref={overlayCanvasRef} 
+    style={{ 
+      position: 'absolute', 
+      top: 0, 
+      left: 0, 
+      pointerEvents: 'none',
+      cursor: 'crosshair',
+      maxWidth: '100%',
+      height: 'auto',
+      display: 'block'
+    }} 
+  />
+</div>
 
       {/* Spectral graph popup - only show on main display */}
       {spectralGraph}
