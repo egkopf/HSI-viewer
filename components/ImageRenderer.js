@@ -1085,28 +1085,31 @@ const ImageRenderer = ({
             );
           })}
 
-                      {(() => {
-              // Check if we have pixels from multiple images
-              const imageSourcesWithPixels = new Set(
-                spectralDataArray.map(data => data.imageSource).filter(source => source)
+          {(() => {
+            // Check if we have pixels from multiple images
+            const imageSourcesWithPixels = new Set(
+              spectralDataArray.map(data => data.imageSource).filter(source => source)
+            );
+            const hasPixelsFromMultipleImages = imageSourcesWithPixels.size > 1;
+            
+            // NEW: Also check if we're in dual-file mode (enableSharedSpectral indicates dual mode)
+            const isDualFileMode = enableSharedSpectral;
+            
+            // Only show RGB bands if we don't have pixels from multiple images AND not in dual-file mode
+            if (!hasPixelsFromMultipleImages && !isDualFileMode) {
+              return (
+                <>
+                  <line x1={paddingX + (bandPositions.red * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.red * graphWidth)}
+                    y2={paddingY + graphHeight} stroke="rgba(255, 0, 0, 0.7)" strokeWidth="1" strokeDasharray="4,2" />
+                  <line x1={paddingX + (bandPositions.green * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.green * graphWidth)}
+                    y2={paddingY + graphHeight} stroke="rgba(0, 180, 0, 0.7)" strokeWidth="1" strokeDasharray="4,2" />
+                  <line x1={paddingX + (bandPositions.blue * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.blue * graphWidth)}
+                    y2={paddingY + graphHeight} stroke="rgba(0, 0, 255, 0.7)" strokeWidth="1" strokeDasharray="4,2" />
+                </>
               );
-              const hasMultipleImagePixels = imageSourcesWithPixels.size > 1;
-              
-              // Only show RGB bands if we don't have pixels from multiple images
-              if (!hasMultipleImagePixels) {
-                return (
-                  <React.Fragment>
-                    <line x1={paddingX + (bandPositions.red * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.red * graphWidth)}
-                      y2={paddingY + graphHeight} stroke="rgba(255, 0, 0, 0.7)" strokeWidth="1" strokeDasharray="4,2" />
-                    <line x1={paddingX + (bandPositions.green * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.green * graphWidth)}
-                      y2={paddingY + graphHeight} stroke="rgba(0, 180, 0, 0.7)" strokeWidth="1" strokeDasharray="4,2" />
-                    <line x1={paddingX + (bandPositions.blue * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.blue * graphWidth)}
-                      y2={paddingY + graphHeight} stroke="rgba(0, 0, 255, 0.7)" strokeWidth="1" strokeDasharray="4,2" />
-                  </React.Fragment>
-                );
-              }
-              return null;
-            })()}
+            }
+            return null;
+          })()}
 
           {cursorPosition && (
             <line x1={cursorPosition} y1={paddingY} x2={cursorPosition} y2={paddingY + graphHeight} stroke="#999" strokeWidth="1" strokeDasharray="2,2" />
