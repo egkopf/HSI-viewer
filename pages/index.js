@@ -65,111 +65,122 @@ export default function Home() {
 
   return (
     <SharedSpectralProvider>
-      <div className="container mx-auto p-4">
-        <h1 className="text-2xl font-bold mb-4">Hyperspectral Data Viewer</h1>
+      <div className="px-2.5 py-2 h-screen flex flex-col max-w-none">
+        {/* Compact Header */}
+        <div className="flex items-center justify-between mb-2">
+          <h1 className="text-lg font-bold">Hyperspectral Data Viewer</h1>
+          <span className="text-xs text-gray-500">ENVI (.hdr + data) or GeoTIFF (.tif/.tiff)</span>
+        </div>
 
-        {/* File Upload Section */}
-        <div className="border rounded-lg p-4 mb-4">
-          <h3 className="font-semibold mb-2">Upload Files</h3>
-          <p className="text-sm text-gray-500 mb-4">
-            Upload ENVI files (.hdr + data file) or GeoTIFF files (.tif/.tiff)
-          </p>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4">
-              <div className="flex justify-between items-center mb-2">
-                <h4 className="font-medium">File 1 {fileName1 && `(${fileName1})`}</h4>
-                {hasFile1 && (
-                  <button 
-                    onClick={() => clearFile(1)}
-                    className="text-red-500 hover:text-red-700 text-sm"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-              <FileUpload onDataReady={(data) => handleDataReady(data, 1)} />
+        {/* Compact File Upload Section */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
+          <div className="border rounded p-2">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-medium">
+                File 1 {fileName1 && <span className="text-xs text-gray-600">({fileName1})</span>}
+              </span>
+              {hasFile1 && (
+                <button 
+                  onClick={() => clearFile(1)}
+                  className="text-red-500 hover:text-red-700 text-xs"
+                >
+                  Clear
+                </button>
+              )}
             </div>
+            <FileUpload onDataReady={(data) => handleDataReady(data, 1)} />
+          </div>
 
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4">
-              <div className="flex justify-between items-center mb-2">
-                <h4 className="font-medium">File 2 {fileName2 && `(${fileName2})`}</h4>
-                {hasFile2 && (
-                  <button 
-                    onClick={() => clearFile(2)}
-                    className="text-red-500 hover:text-red-700 text-sm"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-              <FileUpload onDataReady={(data) => handleDataReady(data, 2)} />
+          <div className="border rounded p-2">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-medium">
+                File 2 {fileName2 && <span className="text-xs text-gray-600">({fileName2})</span>}
+              </span>
+              {hasFile2 && (
+                <button 
+                  onClick={() => clearFile(2)}
+                  className="text-red-500 hover:text-red-700 text-xs"
+                >
+                  Clear
+                </button>
+              )}
             </div>
+            <FileUpload onDataReady={(data) => handleDataReady(data, 2)} />
           </div>
         </div>
 
-        {/* Image Display Section */}
-        {hasBothFiles ? (
-          // Two-file layout
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div>
-              <h3 className="font-semibold mb-2">File 1: {fileName1}</h3>
-              <ImageRenderer
-                bandData={bandData1}
-                metadata={metadata1}
-                loadedBands={loadedBands1}
-                dataFile={dataFile1}
-                fileType={fileType1}
-                enableSharedSpectral={true}
-                isMainSpectralDisplay={true}
-              />
+        {/* Main Content Area - Takes remaining height */}
+        <div className="flex-1 min-h-0">
+          {hasBothFiles ? (
+            // Two-file layout
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 h-full">
+              <div className="flex flex-col min-h-0">
+                {/* <h3 className="text-sm font-semibold mb-1">File 1: {fileName1}</h3> */}
+                <div className="flex-1 min-h-0">
+                  <ImageRenderer
+                    bandData={bandData1}
+                    metadata={metadata1}
+                    loadedBands={loadedBands1}
+                    dataFile={dataFile1}
+                    fileType={fileType1}
+                    enableSharedSpectral={true}
+                    isMainSpectralDisplay={true}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col min-h-0">
+                {/* <h3 className="text-sm font-semibold mb-1">File 2: {fileName2}</h3> */}
+                <div className="flex-1 min-h-0">
+                  <ImageRenderer
+                    bandData={bandData2}
+                    metadata={metadata2}
+                    loadedBands={loadedBands2}
+                    dataFile={dataFile2}
+                    fileType={fileType2}
+                    enableSharedSpectral={true}
+                    isMainSpectralDisplay={false}
+                  />
+                </div>
+              </div>
             </div>
-            <div>
-              <h3 className="font-semibold mb-2">File 2: {fileName2}</h3>
-              <ImageRenderer
-                bandData={bandData2}
-                metadata={metadata2}
-                loadedBands={loadedBands2}
-                dataFile={dataFile2}
-                fileType={fileType2}
-                enableSharedSpectral={true}
-                isMainSpectralDisplay={false}
-              />
+          ) : hasFile1 ? (
+            // Single file layout (File 1)
+            <div className="h-full flex flex-col">
+              {/* <h3 className="text-sm font-semibold mb-1">File: {fileName1}</h3> */}
+              <div className="flex-1 min-h-0">
+                <ImageRenderer
+                  bandData={bandData1}
+                  metadata={metadata1}
+                  loadedBands={loadedBands1}
+                  dataFile={dataFile1}
+                  fileType={fileType1}
+                  enableSharedSpectral={false}
+                  isMainSpectralDisplay={true}
+                />
+              </div>
             </div>
-          </div>
-        ) : hasFile1 ? (
-          // Single file layout (File 1)
-          <div className="mt-4">
-            <h3 className="font-semibold mb-2">File: {fileName1}</h3>
-            <ImageRenderer
-              bandData={bandData1}
-              metadata={metadata1}
-              loadedBands={loadedBands1}
-              dataFile={dataFile1}
-              fileType={fileType1}
-              enableSharedSpectral={false}
-              isMainSpectralDisplay={true}
-            />
-          </div>
-        ) : hasFile2 ? (
-          // Single file layout (File 2)
-          <div className="mt-4">
-            <h3 className="font-semibold mb-2">File: {fileName2}</h3>
-            <ImageRenderer
-              bandData={bandData2}
-              metadata={metadata2}
-              loadedBands={loadedBands2}
-              dataFile={dataFile2}
-              fileType={fileType2}
-              enableSharedSpectral={false}
-              isMainSpectralDisplay={true}
-            />
-          </div>
-        ) : (
-          <div className="text-center text-gray-500 py-8">
-            Upload hyperspectral files to begin analysis
-          </div>
-        )}
+          ) : hasFile2 ? (
+            // Single file layout (File 2)
+            <div className="h-full flex flex-col">
+              <h3 className="text-sm font-semibold mb-1">File: {fileName2}</h3>
+              <div className="flex-1 min-h-0">
+                <ImageRenderer
+                  bandData={bandData2}
+                  metadata={metadata2}
+                  loadedBands={loadedBands2}
+                  dataFile={dataFile2}
+                  fileType={fileType2}
+                  enableSharedSpectral={false}
+                  isMainSpectralDisplay={true}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-full text-gray-500">
+              Upload hyperspectral files to begin analysis
+            </div>
+          )}
+        </div>
       </div>
     </SharedSpectralProvider>
   );

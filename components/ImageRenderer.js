@@ -639,69 +639,7 @@ const ImageRenderer = ({
     return `${Math.round(wavelength)} nm`;
   }, []);
 
-  // Normalization Controls component
-  const NormalizationControls = () => (
-    <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-      <h4 className="font-semibold mb-2 text-sm">Image Enhancement</h4>
-      <div className="grid grid-cols-1 gap-3">
-        <div className="grid grid-cols-3 gap-2">
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              Lower ({Math.round(normalizationSettings.lowerPercentile * 100)}%)
-            </label>
-            <input
-              type="range"
-              min="0"
-              max="10"
-              step="0.5"
-              value={normalizationSettings.lowerPercentile * 100}
-              onChange={(e) => setNormalizationSettings({
-                ...normalizationSettings,
-                lowerPercentile: Number(e.target.value) / 100
-              })}
-              className="w-full h-2"
-            />
-          </div>
 
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              Upper ({Math.round(normalizationSettings.upperPercentile * 100)}%)
-            </label>
-            <input
-              type="range"
-              min="90"
-              max="100"
-              step="0.5"
-              value={normalizationSettings.upperPercentile * 100}
-              onChange={(e) => setNormalizationSettings({
-                ...normalizationSettings,
-                upperPercentile: Number(e.target.value) / 100
-              })}
-              className="w-full h-2"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              Gamma ({normalizationSettings.gamma.toFixed(2)})
-            </label>
-            <input
-              type="range"
-              min="0.2"
-              max="2.0"
-              step="0.05"
-              value={normalizationSettings.gamma}
-              onChange={(e) => setNormalizationSettings({
-                ...normalizationSettings,
-                gamma: Number(e.target.value)
-              })}
-              className="w-full h-2"
-            />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 
   // Only render spectral graph on the main display
   const shouldShowSpectralGraph = isMainSpectralDisplay && showSpectralGraph && spectralDataArray.length > 0;
@@ -1324,61 +1262,61 @@ const ImageRenderer = ({
   return (
     <div className="relative">
       {/* Band Selection Controls */}
-      <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-        <h4 className="font-semibold mb-2 text-sm">Band Selection</h4>
-        {loadingBands && <p className="text-blue-600 mb-2 text-xs">Loading new bands...</p>}
-        <form onSubmit={handleSubmit} className="flex gap-2 flex-wrap">
-          <div className="flex items-center">
-            <label className="mr-1 font-medium text-red-600 text-xs">R:</label>
+      <div className="mb-2 p-2 bg-gray-50 rounded">
+        <h4 className="font-medium mb-1 text-xs">Band Selection</h4>
+        {loadingBands && <p className="text-blue-600 mb-1 text-xs">Loading...</p>}
+        <form onSubmit={handleSubmit} className="flex gap-1 items-center flex-wrap">
+          <div className="flex items-center gap-1">
+            <label className="font-medium text-red-600 text-xs">R:</label>
             <input
               type="number"
               name="red"
-              className="border rounded px-1 py-1 w-12 text-xs"
+              className="border rounded px-1 py-0.5 w-10 text-xs"
               value={inputBands.red}
               onChange={(e) => setInputBands({ ...inputBands, red: e.target.value })}
               min="1"
               max={metadata?.bands || 100}
               disabled={loadingBands}
             />
-            <span className="ml-1 text-xs text-red-600">
+            <span className="text-xs text-red-600">
               {formatWavelength(getWavelengthForBand(bands.red))}
             </span>
           </div>
-          <div className="flex items-center">
-            <label className="mr-1 font-medium text-green-600 text-xs">G:</label>
+          <div className="flex items-center gap-1">
+            <label className="font-medium text-green-600 text-xs">G:</label>
             <input
               type="number"
               name="green"
-              className="border rounded px-1 py-1 w-12 text-xs"
+              className="border rounded px-1 py-0.5 w-10 text-xs"
               value={inputBands.green}
               onChange={(e) => setInputBands({ ...inputBands, green: e.target.value })}
               min="1"
               max={metadata?.bands || 100}
               disabled={loadingBands}
             />
-            <span className="ml-1 text-xs text-green-600">
+            <span className="text-xs text-green-600">
               {formatWavelength(getWavelengthForBand(bands.green))}
             </span>
           </div>
-          <div className="flex items-center">
-            <label className="mr-1 font-medium text-blue-600 text-xs">B:</label>
+          <div className="flex items-center gap-1">
+            <label className="font-medium text-blue-600 text-xs">B:</label>
             <input
               type="number"
               name="blue"
-              className="border rounded px-1 py-1 w-12 text-xs"
+              className="border rounded px-1 py-0.5 w-10 text-xs"
               value={inputBands.blue}
               onChange={(e) => setInputBands({ ...inputBands, blue: e.target.value })}
               min="1"
               max={metadata?.bands || 100}
               disabled={loadingBands}
             />
-            <span className="ml-1 text-xs text-blue-600">
+            <span className="text-xs text-blue-600">
               {formatWavelength(getWavelengthForBand(bands.blue))}
             </span>
           </div>
           <button
             type="submit"
-            className="bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded text-xs"
+            className="bg-blue-500 hover:bg-blue-600 text-white px-2 py-0.5 rounded text-xs ml-1"
             disabled={loadingBands}
           >
             Update
@@ -1387,7 +1325,64 @@ const ImageRenderer = ({
       </div>
 
       {/* Normalization controls */}
-      <NormalizationControls />
+      <div className="mb-2 p-2 bg-gray-50 rounded">
+        <h4 className="font-medium mb-1 text-xs">Enhancement</h4>
+        <div className="grid grid-cols-3 gap-1">
+          <div>
+            <label className="block text-xs text-gray-600 mb-0.5">
+              Low ({Math.round(normalizationSettings.lowerPercentile * 100)}%)
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="10"
+              step="0.5"
+              value={normalizationSettings.lowerPercentile * 100}
+              onChange={(e) => setNormalizationSettings({
+                ...normalizationSettings,
+                lowerPercentile: Number(e.target.value) / 100
+              })}
+              className="w-full h-1"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-600 mb-0.5">
+              High ({Math.round(normalizationSettings.upperPercentile * 100)}%)
+            </label>
+            <input
+              type="range"
+              min="90"
+              max="100"
+              step="0.5"
+              value={normalizationSettings.upperPercentile * 100}
+              onChange={(e) => setNormalizationSettings({
+                ...normalizationSettings,
+                upperPercentile: Number(e.target.value) / 100
+              })}
+              className="w-full h-1"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-600 mb-0.5">
+              Gamma ({normalizationSettings.gamma.toFixed(2)})
+            </label>
+            <input
+              type="range"
+              min="0.2"
+              max="2.0"
+              step="0.05"
+              value={normalizationSettings.gamma}
+              onChange={(e) => setNormalizationSettings({
+                ...normalizationSettings,
+                gamma: Number(e.target.value)
+              })}
+              className="w-full h-1"
+            />
+          </div>
+        </div>
+      </div>
 
       {/* Zoom info */}
       <div className="mb-2 text-xs text-gray-600">
@@ -1400,9 +1395,7 @@ const ImageRenderer = ({
         className="image-container relative overflow-hidden border border-gray-300"
         style={{ 
           cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'crosshair',
-          width: '100%',
-          height: '60vh',
-          minHeight: '400px'
+          width: '100%'
         }}
       >
         <div 

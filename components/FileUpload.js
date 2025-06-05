@@ -114,67 +114,61 @@ const FileUpload = ({ onDataReady }) => {
 
     setProcessing(false);
 
-    // Send the data to parent - ADD fileType here
+    // Send the data to parent
     onDataReady({
       fileName: dataFile.name,
       dataFile,
       metadata,
       bandData: rgbData,
       loadedBands: defaultBands,
-      fileType: 'envi'  // Add this line
+      fileType: 'envi'
     });
   };
 
   return (
-    <div className="my-4">
-      <div className="flex flex-col gap-2">
-        <div className="p-4 border-2 border-dashed border-gray-300 rounded-lg">
-          <input
-            type="file"
-            accept="*"
-            multiple
-            onChange={(e) => processFiles(e.target.files)}
-            disabled={processing}
-            className="w-full"
-          />
-          <p className="mt-2 text-sm text-gray-500">
-            Upload ENVI files (.hdr + data file) or GeoTIFF files (.tif/.tiff)
-          </p>
-        </div>
-
-        {processing && (
-          <div className="mt-2">
-            <p>Loading data
-              <span className="dot-1">.</span>
-              <span className="dot-2">.</span>
-              <span className="dot-3">.</span>
-            </p>
-            <style jsx>{`
-              .dot-1 {
-                animation: dot1 2s infinite;
-              }
-              .dot-2 {
-                animation: dot2 2s infinite;
-              }
-              .dot-3 {
-                animation: dot3 2s infinite;
-              }
-              @keyframes dot1 {
-                0%, 100% { opacity: 0; }
-                25%, 50%, 75% { opacity: 1; }
-              }
-              @keyframes dot2 {
-                0%, 25%, 100% { opacity: 0; }
-                50%, 75% { opacity: 1; }
-              }
-              @keyframes dot3 {
-                0%, 25%, 50%, 100% { opacity: 0; }
-                75% { opacity: 1; }
-              }
-            `}</style>
+    <div className="relative">
+      <input
+        type="file"
+        accept="*"
+        multiple
+        onChange={(e) => processFiles(e.target.files)}
+        disabled={processing}
+        className="w-full text-xs"
+      />
+      
+      {processing && (
+        <div className="absolute inset-0 bg-blue-100 bg-opacity-90 flex items-center justify-center rounded">
+          <div className="text-xs text-blue-800 font-medium">
+            Loading data
+            <span className="dot-1">.</span>
+            <span className="dot-2">.</span>
+            <span className="dot-3">.</span>
           </div>
-        )}
-      </div>
+          <style jsx>{`
+            .dot-1 {
+              animation: dot1 2s infinite;
+            }
+            .dot-2 {
+              animation: dot2 2s infinite;
+            }
+            .dot-3 {
+              animation: dot3 2s infinite;
+            }
+            @keyframes dot1 {
+              0%, 100% { opacity: 0; }
+              25%, 50%, 75% { opacity: 1; }
+            }
+            @keyframes dot2 {
+              0%, 25%, 100% { opacity: 0; }
+              50%, 75% { opacity: 1; }
+            }
+            @keyframes dot3 {
+              0%, 25%, 50%, 100% { opacity: 0; }
+              75% { opacity: 1; }
+            }
+          `}</style>
+        </div>
+      )}
     </div>
   );
 };
