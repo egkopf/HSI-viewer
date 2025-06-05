@@ -44,7 +44,15 @@ const ImageRenderer = ({
 }) => {
   const canvasRef = useRef(null);
   const overlayCanvasRef = useRef(null);
+  const containerRef = useRef(null);
   const svgRef = useRef(null);
+
+  // Zoom state
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [hasDragged, setHasDragged] = useState(false);
+  const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
   // Always call the hook, but conditionally use its values
   const sharedContext = useSharedSpectral();
@@ -136,6 +144,13 @@ const ImageRenderer = ({
     setCurrentLoadedBands(loadedBands);
   }, [bandData, loadedBands]);
 
+  // Reset zoom when new file is loaded
+  useEffect(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setHasDragged(false);
+  }, [dataFile]);
+
   // Load new bands when band selection changes
   const loadNewBands = useCallback(async (newBands) => {
     if (!dataFile || !metadata) return;
@@ -173,7 +188,38 @@ const ImageRenderer = ({
     }
   }, [dataFile, metadata, currentLoadedBands]);
 
-  // Render the image data to the canvas (same as before - unchanged)
+  // Convert display coordinates to image coordinates
+  const displayToImageCoords = useCallback((displayX, displayY) => {
+    if (!canvasRef.current || !metadata || !containerRef.current) return { x: -1, y: -1 };
+    
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    const containerRect = container.getBoundingClientRect();
+    
+    // Calculate relative position within the container
+    const relativeX = displayX - containerRect.left;
+    const relativeY = displayY - containerRect.top;
+    
+    // Reverse the zoom and pan transform to get position on the base canvas
+    const baseCanvasX = (relativeX - pan.x) / zoom;
+    const baseCanvasY = (relativeY - pan.y) / zoom;
+    
+    // Get the canvas as it appears at zoom=1 (its natural CSS-scaled size)
+    const canvasRect = canvas.getBoundingClientRect();
+    const baseCanvasWidth = canvasRect.width / zoom;  // Actual displayed size at zoom=1
+    const baseCanvasHeight = canvasRect.height / zoom;
+    
+    // Scale from base canvas display size to actual canvas pixels
+    const scaleX = canvas.width / baseCanvasWidth;
+    const scaleY = canvas.height / baseCanvasHeight;
+    
+    const pixelX = Math.floor(baseCanvasX * scaleX);
+    const pixelY = Math.floor(baseCanvasY * scaleY);
+    
+    return { x: pixelX, y: pixelY };
+  }, [zoom, pan, metadata]);
+
+  // Render the image data to the canvas
   useEffect(() => {
     if (!currentBandData || !metadata || !canvasRef.current) return;
 
@@ -337,15 +383,9 @@ const ImageRenderer = ({
   }, [spectralDataArray, metadata]);
 
   const handlePixelClick = useCallback(async (event) => {
-    if (!dataFile || !metadata || !canvasRef.current) return;
+    if (!dataFile || !metadata || !canvasRef.current || hasDragged) return;
 
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-
-    const x = Math.floor((event.clientX - rect.left) * scaleX);
-    const y = Math.floor((event.clientY - rect.top) * scaleY);
+    const { x, y } = displayToImageCoords(event.clientX, event.clientY);
 
     if (x < 0 || x >= metadata.samples || y < 0 || y >= metadata.lines) {
       return;
@@ -376,7 +416,7 @@ const ImageRenderer = ({
         color: randomColor,
         name: `Pixel (${x}, ${y})`,
         imageSource: enableSharedSpectral ? (isMainSpectralDisplay ? 'img 1' : 'img 2') : null,
-        metadata: metadata // Store metadata to access wavelength info later
+        metadata: metadata
       };
 
       if (enableSharedSpectral) {
@@ -389,22 +429,102 @@ const ImageRenderer = ({
       console.error('Error extracting pixel spectrum:', error);
       alert('Failed to extract spectral data: ' + error.message);
     }
-  }, [dataFile, metadata, enableSharedSpectral, sharedContext]);
+      }, [dataFile, metadata, enableSharedSpectral, sharedContext, displayToImageCoords, hasDragged]);
 
-  // Set up event listeners (same as before)
+  // Handle zoom with mouse wheel
+  const handleWheel = useCallback((event) => {
+    event.preventDefault();
+    
+    const delta = -event.deltaY;
+    const zoomFactor = delta > 0 ? 1.1 : 0.9;
+    const newZoom = Math.max(1, zoom * zoomFactor);
+    
+    if (newZoom === zoom) return; // No change if at minimum zoom
+    
+    const container = containerRef.current;
+    if (!container) return;
+    
+    const rect = container.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+    
+    if (newZoom === 1) {
+      // Smooth transition back to base view
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+    } else {
+      // Calculate new pan to keep mouse position stationary
+      const newPan = {
+        x: mouseX - (mouseX - pan.x) * (newZoom / zoom),
+        y: mouseY - (mouseY - pan.y) * (newZoom / zoom)
+      };
+      
+      setZoom(newZoom);
+      setPan(newPan);
+    }
+  }, [zoom, pan]);
+
+  // Handle mouse down for panning
+  const handleMouseDown = useCallback((event) => {
+    if (zoom > 1) { // Only allow panning when zoomed in
+      setIsDragging(true);
+      setHasDragged(false);
+      setLastMousePos({ x: event.clientX, y: event.clientY });
+    }
+  }, [zoom]);
+
+  // Handle mouse move for panning
+  const handleMouseMove = useCallback((event) => {
+    if (!isDragging || zoom <= 1) return; // Only pan when dragging and zoomed in
+    
+    const deltaX = event.clientX - lastMousePos.x;
+    const deltaY = event.clientY - lastMousePos.y;
+    
+    // Mark as dragged if there's significant movement
+    if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
+      setHasDragged(true);
+    }
+    
+    setPan(prev => {
+      const newPan = {
+        x: prev.x + deltaX,
+        y: prev.y + deltaY
+      };
+      
+      // Constrain pan to reasonable bounds when zoomed in
+      if (!canvasRef.current || !containerRef.current) return newPan;
+      
+      const canvas = canvasRef.current;
+      const container = containerRef.current;
+      const containerRect = container.getBoundingClientRect();
+      
+      const scaledWidth = canvas.width * zoom;
+      const scaledHeight = canvas.height * zoom;
+      
+      // Don't allow panning beyond the image boundaries
+      newPan.x = Math.min(0, Math.max(containerRect.width - scaledWidth, newPan.x));
+      newPan.y = Math.min(0, Math.max(containerRect.height - scaledHeight, newPan.y));
+      
+      return newPan;
+    });
+    
+    setLastMousePos({ x: event.clientX, y: event.clientY });
+  }, [isDragging, lastMousePos, zoom]);
+
+  // Handle mouse up
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  // Set up event listeners
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!container) return;
 
     const handleCanvasClick = async (event) => {
-      if (!currentBandData || !canvasRef.current) return;
+      if (!currentBandData || !canvasRef.current || hasDragged) return;
 
-      const rect = canvas.getBoundingClientRect();
-      const scaleX = canvas.width / rect.width;
-      const scaleY = canvas.height / rect.height;
-
-      const x = Math.floor((event.clientX - rect.left) * scaleX);
-      const y = Math.floor((event.clientY - rect.top) * scaleY);
+      const { x, y } = displayToImageCoords(event.clientX, event.clientY);
 
       if (x < 0 || x >= metadata.samples || y < 0 || y >= metadata.lines) {
         return;
@@ -424,11 +544,22 @@ const ImageRenderer = ({
       await handlePixelClick(event);
     };
 
-    canvas.addEventListener('click', handleCanvasClick);
+    container.addEventListener('click', handleCanvasClick);
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    container.addEventListener('mousedown', handleMouseDown);
+    container.addEventListener('mousemove', handleMouseMove);
+    container.addEventListener('mouseup', handleMouseUp);
+    container.addEventListener('mouseleave', handleMouseUp);
+
     return () => {
-      canvas.removeEventListener('click', handleCanvasClick);
+      container.removeEventListener('click', handleCanvasClick);
+      container.removeEventListener('wheel', handleWheel);
+      container.removeEventListener('mousedown', handleMouseDown);
+      container.removeEventListener('mousemove', handleMouseMove);
+      container.removeEventListener('mouseup', handleMouseUp);
+      container.removeEventListener('mouseleave', handleMouseUp);
     };
-  }, [handlePixelClick, currentBandData, metadata]);
+  }, [handlePixelClick, currentBandData, metadata, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp]);
 
   // Handle clicking outside the graph
   useEffect(() => {
@@ -436,7 +567,7 @@ const ImageRenderer = ({
 
     const handleOutsideClick = (event) => {
       const isClickOnGraph = event.target.closest('.spectral-graph');
-      const isClickOnCanvas = event.target.closest('canvas');
+      const isClickOnCanvas = event.target.closest('.image-container');
 
       if (!isClickOnGraph && !isClickOnCanvas) {
         setShowSpectralGraph(false);
@@ -467,7 +598,7 @@ const ImageRenderer = ({
     }
   }, [dataFile]);
 
-  // Handle form submission for band selection (same as before)
+  // Handle form submission for band selection
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -490,7 +621,7 @@ const ImageRenderer = ({
     }
   };
 
-  // Helper functions (same as before)
+  // Helper functions
   const getWavelengthForBand = useCallback((bandNumber) => {
     if (!metadata || !metadata.wavelengthValues ||
       bandNumber < 1 || bandNumber > metadata.bands) {
@@ -508,74 +639,74 @@ const ImageRenderer = ({
     return `${Math.round(wavelength)} nm`;
   }, []);
 
-  // Normalization Controls component (same as before)
+  // Normalization Controls component
   const NormalizationControls = () => (
-  <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-    <h4 className="font-semibold mb-2 text-sm">Image Enhancement</h4>
-    <div className="grid grid-cols-1 gap-3">
-      <div className="grid grid-cols-3 gap-2">
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">
-            Lower ({Math.round(normalizationSettings.lowerPercentile * 100)}%)
-          </label>
-          <input
-            type="range"
-            min="0"
-            max="10"
-            step="0.5"
-            value={normalizationSettings.lowerPercentile * 100}
-            onChange={(e) => setNormalizationSettings({
-              ...normalizationSettings,
-              lowerPercentile: Number(e.target.value) / 100
-            })}
-            className="w-full h-2"
-          />
-        </div>
+    <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+      <h4 className="font-semibold mb-2 text-sm">Image Enhancement</h4>
+      <div className="grid grid-cols-1 gap-3">
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Lower ({Math.round(normalizationSettings.lowerPercentile * 100)}%)
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="10"
+              step="0.5"
+              value={normalizationSettings.lowerPercentile * 100}
+              onChange={(e) => setNormalizationSettings({
+                ...normalizationSettings,
+                lowerPercentile: Number(e.target.value) / 100
+              })}
+              className="w-full h-2"
+            />
+          </div>
 
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">
-            Upper ({Math.round(normalizationSettings.upperPercentile * 100)}%)
-          </label>
-          <input
-            type="range"
-            min="90"
-            max="100"
-            step="0.5"
-            value={normalizationSettings.upperPercentile * 100}
-            onChange={(e) => setNormalizationSettings({
-              ...normalizationSettings,
-              upperPercentile: Number(e.target.value) / 100
-            })}
-            className="w-full h-2"
-          />
-        </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Upper ({Math.round(normalizationSettings.upperPercentile * 100)}%)
+            </label>
+            <input
+              type="range"
+              min="90"
+              max="100"
+              step="0.5"
+              value={normalizationSettings.upperPercentile * 100}
+              onChange={(e) => setNormalizationSettings({
+                ...normalizationSettings,
+                upperPercentile: Number(e.target.value) / 100
+              })}
+              className="w-full h-2"
+            />
+          </div>
 
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">
-            Gamma ({normalizationSettings.gamma.toFixed(2)})
-          </label>
-          <input
-            type="range"
-            min="0.2"
-            max="2.0"
-            step="0.05"
-            value={normalizationSettings.gamma}
-            onChange={(e) => setNormalizationSettings({
-              ...normalizationSettings,
-              gamma: Number(e.target.value)
-            })}
-            className="w-full h-2"
-          />
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Gamma ({normalizationSettings.gamma.toFixed(2)})
+            </label>
+            <input
+              type="range"
+              min="0.2"
+              max="2.0"
+              step="0.05"
+              value={normalizationSettings.gamma}
+              onChange={(e) => setNormalizationSettings({
+                ...normalizationSettings,
+                gamma: Number(e.target.value)
+              })}
+              className="w-full h-2"
+            />
+          </div>
         </div>
       </div>
     </div>
-  </div>
-);
+  );
 
   // Only render spectral graph on the main display
   const shouldShowSpectralGraph = isMainSpectralDisplay && showSpectralGraph && spectralDataArray.length > 0;
 
-  // Simplified spectral graph (keeping your existing implementation but only showing on main display)
+  // Spectral graph component (keeping existing implementation)
   const spectralGraph = useMemo(() => {
     if (!shouldShowSpectralGraph) {
       return null;
@@ -1190,7 +1321,6 @@ const ImageRenderer = ({
     );
   }, [spectralDataArray, shouldShowSpectralGraph, metadata, bands, hoveredPoint, cursorPosition, editingIndex, editingName, enableSharedSpectral, sharedContext]);
 
-
   return (
     <div className="relative">
       {/* Band Selection Controls */}
@@ -1259,30 +1389,52 @@ const ImageRenderer = ({
       {/* Normalization controls */}
       <NormalizationControls />
 
-      <div className="relative">
-  <canvas 
-    ref={canvasRef} 
-    style={{ 
-      cursor: 'crosshair',
-      maxWidth: '100%',
-      height: 'auto',
-      display: 'block'
-    }} 
-  />
-  <canvas 
-    ref={overlayCanvasRef} 
-    style={{ 
-      position: 'absolute', 
-      top: 0, 
-      left: 0, 
-      pointerEvents: 'none',
-      cursor: 'crosshair',
-      maxWidth: '100%',
-      height: 'auto',
-      display: 'block'
-    }} 
-  />
-</div>
+      {/* Zoom info */}
+      <div className="mb-2 text-xs text-gray-600">
+        Zoom: {zoom.toFixed(1)}x | Mouse wheel to zoom{zoom > 1 ? ', drag to pan' : ''}
+      </div>
+
+      {/* Image container with zoom and pan */}
+      <div 
+        ref={containerRef}
+        className="image-container relative overflow-hidden border border-gray-300"
+        style={{ 
+          cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'crosshair',
+          width: '100%',
+          height: '60vh',
+          minHeight: '400px'
+        }}
+      >
+        <div 
+          className="transition-transform duration-200 ease-out"
+          style={{
+            transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
+            transformOrigin: '0 0',
+            width: 'fit-content'
+          }}
+        >
+          <canvas 
+            ref={canvasRef} 
+            style={{ 
+              display: 'block',
+              maxWidth: '100%',
+              height: 'auto'
+            }} 
+          />
+          <canvas 
+            ref={overlayCanvasRef} 
+            style={{ 
+              position: 'absolute', 
+              top: 0, 
+              left: 0, 
+              pointerEvents: 'none',
+              display: 'block',
+              maxWidth: '100%',
+              height: 'auto'
+            }} 
+          />
+        </div>
+      </div>
 
       {/* Spectral graph popup - only show on main display */}
       {spectralGraph}
