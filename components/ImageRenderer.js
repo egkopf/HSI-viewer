@@ -433,7 +433,10 @@ const ImageRenderer = ({
 
   // Handle zoom with mouse wheel
   const handleWheel = useCallback((event) => {
-    event.preventDefault();
+    // Only prevent default (page scroll) if we're zoomed in
+    if (zoom > 1) {
+      event.preventDefault();
+    }
     
     const delta = -event.deltaY;
     const zoomFactor = delta > 0 ? 1.1 : 0.9;
@@ -441,26 +444,31 @@ const ImageRenderer = ({
     
     if (newZoom === zoom) return; // No change if at minimum zoom
     
-    const container = containerRef.current;
-    if (!container) return;
-    
-    const rect = container.getBoundingClientRect();
-    const mouseX = event.clientX - rect.left;
-    const mouseY = event.clientY - rect.top;
-    
-    if (newZoom === 1) {
-      // Smooth transition back to base view
-      setZoom(1);
-      setPan({ x: 0, y: 0 });
-    } else {
-      // Calculate new pan to keep mouse position stationary
-      const newPan = {
-        x: mouseX - (mouseX - pan.x) * (newZoom / zoom),
-        y: mouseY - (mouseY - pan.y) * (newZoom / zoom)
-      };
+    // Only handle zoom if we're changing zoom level or already zoomed
+    if (newZoom > 1 || zoom > 1) {
+      event.preventDefault(); // Prevent page scroll when zooming
       
-      setZoom(newZoom);
-      setPan(newPan);
+      const container = containerRef.current;
+      if (!container) return;
+      
+      const rect = container.getBoundingClientRect();
+      const mouseX = event.clientX - rect.left;
+      const mouseY = event.clientY - rect.top;
+      
+      if (newZoom === 1) {
+        // Smooth transition back to base view
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+      } else {
+        // Calculate new pan to keep mouse position stationary
+        const newPan = {
+          x: mouseX - (mouseX - pan.x) * (newZoom / zoom),
+          y: mouseY - (mouseY - pan.y) * (newZoom / zoom)
+        };
+        
+        setZoom(newZoom);
+        setPan(newPan);
+      }
     }
   }, [zoom, pan]);
 
