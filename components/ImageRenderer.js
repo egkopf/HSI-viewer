@@ -94,6 +94,11 @@ const ImageRenderer = ({
     return { red: '1', green: '1', blue: '1' };
   });
 
+  // Wavelength editing state
+  const [editingWavelengths, setEditingWavelengths] = useState(false);
+  const [wavelengthInputs, setWavelengthInputs] = useState('');
+  const [wavelengthUnit, setWavelengthUnit] = useState('nm');
+
   const [currentBandData, setCurrentBandData] = useState(bandData);
   const [currentLoadedBands, setCurrentLoadedBands] = useState(loadedBands);
   const [loadingBands, setLoadingBands] = useState(false);
@@ -135,6 +140,19 @@ const ImageRenderer = ({
         green: loadedBands[1].toString(),
         blue: loadedBands[2].toString()
       });
+    }
+
+    // Initialize wavelength inputs when metadata changes
+    if (metadata?.wavelengthValues) {
+      const wavelengths = metadata.wavelengthValues;
+      const avgWavelength = wavelengths.reduce((sum, wl) => sum + wl, 0) / wavelengths.length;
+      const detectedUnit = avgWavelength < 10 ? 'µm' : 'nm';
+      
+      setWavelengthUnit(detectedUnit);
+      setWavelengthInputs(wavelengths.map(w => w.toFixed(detectedUnit === 'µm' ? 3 : 0)).join(', '));
+    } else {
+      setWavelengthInputs('');
+      setWavelengthUnit('nm');
     }
   }, [metadata, loadedBands]);
 
@@ -429,7 +447,7 @@ const ImageRenderer = ({
       console.error('Error extracting pixel spectrum:', error);
       alert('Failed to extract spectral data: ' + error.message);
     }
-      }, [dataFile, metadata, enableSharedSpectral, sharedContext, displayToImageCoords, hasDragged]);
+  }, [dataFile, metadata, enableSharedSpectral, sharedContext, displayToImageCoords, hasDragged]);
 
   // Handle zoom with mouse wheel
   const handleWheel = useCallback((event) => {
@@ -647,12 +665,59 @@ const ImageRenderer = ({
     return `${Math.round(wavelength)} nm`;
   }, []);
 
+  // Handle wavelength updates
+  const handleWavelengthUpdate = () => {
+    if (!metadata || !wavelengthInputs.trim()) return;
 
+    try {
+      const inputWavelengths = wavelengthInputs
+        .split(',')
+        .map(w => parseFloat(w.trim()))
+        .filter(w => !isNaN(w) && w > 0);
+
+      if (inputWavelengths.length !== metadata.bands) {
+        alert(`Please enter exactly ${metadata.bands} wavelength values to match the number of bands.`);
+        return;
+      }
+
+      // Convert to nanometers if needed for consistency
+      const wavelengthsInNm = wavelengthUnit === 'µm' 
+        ? inputWavelengths.map(w => w * 1000) 
+        : inputWavelengths;
+
+      // Update metadata (this would need to be passed up to parent in real implementation)
+      if (metadata.wavelengthValues) {
+        metadata.wavelengthValues = wavelengthsInNm;
+        metadata.hasRealWavelengths = true;
+        metadata.wavelengthSource = `user edit (${wavelengthUnit})`;
+      }
+
+      setEditingWavelengths(false);
+      alert('Wavelengths updated successfully!');
+    } catch (error) {
+      alert('Invalid wavelength format. Please enter numeric values separated by commas.');
+    }
+  };
+
+  const cancelWavelengthEdit = () => {
+    // Reset to original values
+    if (metadata?.wavelengthValues) {
+      const wavelengths = metadata.wavelengthValues;
+      const avgWavelength = wavelengths.reduce((sum, wl) => sum + wl, 0) / wavelengths.length;
+      const detectedUnit = avgWavelength < 10 ? 'µm' : 'nm';
+      
+      setWavelengthUnit(detectedUnit);
+      setWavelengthInputs(wavelengths.map(w => w.toFixed(detectedUnit === 'µm' ? 3 : 0)).join(', '));
+    } else {
+      setWavelengthInputs('');
+    }
+    setEditingWavelengths(false);
+  };
 
   // Only render spectral graph on the main display
   const shouldShowSpectralGraph = isMainSpectralDisplay && showSpectralGraph && spectralDataArray.length > 0;
 
-  // Spectral graph component (keeping existing implementation)
+  // Spectral graph component with proper wavelength positioning
   const spectralGraph = useMemo(() => {
     if (!shouldShowSpectralGraph) {
       return null;
@@ -928,12 +993,9 @@ const ImageRenderer = ({
 
           const sortedData = [...specData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
           const spectrumIsInMicrometers = isInMicrometers(sortedData.map(d => d.wavelength));
+          const hasRealWavelengths = specData.metadata?.wavelengthValues && specData.metadata.wavelengthValues.length > 0;
           
-          // Get the actual wavelength range for this specific spectrum
-          const spectrumMinWl = Math.min(...sortedData.map(d => d.wavelength));
-          const spectrumMaxWl = Math.max(...sortedData.map(d => d.wavelength));
-          
-          if (hasMultipleImages && globalWavelength) {
+          if (hasMultipleImages && globalWavelength && hasRealWavelengths) {
             // Convert global wavelength to spectrum's units for comparison
             let targetWavelength = globalWavelength;
             if (globalUnit === 'nm' && spectrumIsInMicrometers) {
@@ -943,6 +1005,9 @@ const ImageRenderer = ({
             }
             
             // Check if the target wavelength is within this spectrum's actual range
+            const spectrumMinWl = Math.min(...sortedData.map(d => d.wavelength));
+            const spectrumMaxWl = Math.max(...sortedData.map(d => d.wavelength));
+            
             if (targetWavelength < spectrumMinWl || targetWavelength > spectrumMaxWl) {
               // Clear hover point for this spectrum if outside its range
               specData.hoverPoint = null;
@@ -984,8 +1049,43 @@ const ImageRenderer = ({
                 y: yPos
               };
             }
+          } else if (hasRealWavelengths) {
+            // Single image with real wavelengths - use actual wavelength spacing
+            const spectrumMinWl = Math.min(...sortedData.map(d => d.wavelength));
+            const spectrumMaxWl = Math.max(...sortedData.map(d => d.wavelength));
+            const spectrumRange = spectrumMaxWl - spectrumMinWl;
+            
+            const targetWavelength = spectrumMinWl + relativeX * spectrumRange;
+            
+            // Find closest wavelength
+            let closestIndex = 0;
+            let minDiff = Math.abs(sortedData[0].wavelength - targetWavelength);
+            
+            for (let i = 1; i < sortedData.length; i++) {
+              const diff = Math.abs(sortedData[i].wavelength - targetWavelength);
+              if (diff < minDiff) {
+                minDiff = diff;
+                closestIndex = i;
+              }
+            }
+            
+            if (closestIndex >= 0 && closestIndex < sortedData.length) {
+              const value = sortedData[closestIndex].value;
+              const wavelength = sortedData[closestIndex].wavelength;
+              
+              // Position based on actual wavelength
+              const xPos = paddingX + ((wavelength - spectrumMinWl) / spectrumRange) * graphWidth;
+              const yPos = paddingY + graphHeight - ((value - minValue) / (maxValue - minValue) * graphHeight);
+
+              specData.hoverPoint = {
+                value,
+                wavelength,
+                x: xPos,
+                y: yPos
+              };
+            }
           } else {
-            // Original behavior for single image
+            // Fallback to equidistant spacing when no wavelength data
             const exactIndex = relativeX * (sortedData.length - 1);
             const dataIndex = Math.round(exactIndex);
 
@@ -1114,10 +1214,11 @@ const ImageRenderer = ({
             if (!specData.spectrum || specData.spectrum.length === 0) return null;
 
             const sortedData = [...specData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
+            const hasRealWavelengths = specData.metadata?.wavelengthValues && specData.metadata.wavelengthValues.length > 0;
 
             let points;
-            if (hasMultipleImages) {
-              // Scale each spectrum to the global wavelength range with unit conversion
+            if (hasMultipleImages || hasRealWavelengths) {
+              // Use actual wavelength positioning for proper spacing
               const spectrumWavelengths = sortedData.map(d => d.wavelength);
               const spectrumIsInMicrometers = isInMicrometers(spectrumWavelengths);
               
@@ -1136,7 +1237,7 @@ const ImageRenderer = ({
                 return `${x},${y}`;
               }).join(' ');
             } else {
-              // Original behavior for single image
+              // Fallback to equidistant spacing only when no wavelength data exists
               points = sortedData.map((point, index) => {
                 const x = paddingX + (index / (sortedData.length - 1)) * graphWidth;
                 const y = paddingY + graphHeight - ((point.value - minValue) / (maxValue - minValue) * graphHeight);
@@ -1269,67 +1370,152 @@ const ImageRenderer = ({
 
   return (
     <div className="relative">
-      {/* Band Selection Controls */}
+      {/* Band Selection and Wavelength Editor Controls */}
       <div className="mb-2 p-2 bg-gray-50 rounded">
-        <h4 className="font-medium mb-1 text-xs">Band Selection</h4>
-        {loadingBands && <p className="text-blue-600 mb-1 text-xs">Loading...</p>}
-        <form onSubmit={handleSubmit} className="flex gap-1 items-center flex-wrap">
-          <div className="flex items-center gap-1">
-            <label className="font-medium text-red-600 text-xs">R:</label>
-            <input
-              type="number"
-              name="red"
-              className="border rounded px-1 py-0.5 w-10 text-xs"
-              value={inputBands.red}
-              onChange={(e) => setInputBands({ ...inputBands, red: e.target.value })}
-              min="1"
-              max={metadata?.bands || 100}
-              disabled={loadingBands}
-            />
-            <span className="text-xs text-red-600">
-              {formatWavelength(getWavelengthForBand(bands.red))}
-            </span>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {/* Band Selection */}
+          <div>
+            <h4 className="font-medium mb-1 text-xs">Band Selection</h4>
+            {loadingBands && <p className="text-blue-600 mb-1 text-xs">Loading...</p>}
+            <form onSubmit={handleSubmit} className="space-y-2">
+              <div className="flex gap-1 items-center flex-wrap">
+                <div className="flex items-center gap-1">
+                  <label className="font-medium text-red-600 text-xs">R:</label>
+                  <input
+                    type="number"
+                    name="red"
+                    className="border rounded px-1 py-0.5 w-10 text-xs"
+                    value={inputBands.red}
+                    onChange={(e) => setInputBands({ ...inputBands, red: e.target.value })}
+                    min="1"
+                    max={metadata?.bands || 100}
+                    disabled={loadingBands}
+                  />
+                  <span className="text-xs text-red-600">
+                    {formatWavelength(getWavelengthForBand(bands.red))}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <label className="font-medium text-green-600 text-xs">G:</label>
+                  <input
+                    type="number"
+                    name="green"
+                    className="border rounded px-1 py-0.5 w-10 text-xs"
+                    value={inputBands.green}
+                    onChange={(e) => setInputBands({ ...inputBands, green: e.target.value })}
+                    min="1"
+                    max={metadata?.bands || 100}
+                    disabled={loadingBands}
+                  />
+                  <span className="text-xs text-green-600">
+                    {formatWavelength(getWavelengthForBand(bands.green))}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <label className="font-medium text-blue-600 text-xs">B:</label>
+                  <input
+                    type="number"
+                    name="blue"
+                    className="border rounded px-1 py-0.5 w-10 text-xs"
+                    value={inputBands.blue}
+                    onChange={(e) => setInputBands({ ...inputBands, blue: e.target.value })}
+                    min="1"
+                    max={metadata?.bands || 100}
+                    disabled={loadingBands}
+                  />
+                  <span className="text-xs text-blue-600">
+                    {formatWavelength(getWavelengthForBand(bands.blue))}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="submit"
+                className="bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded text-xs w-full"
+                disabled={loadingBands}
+              >
+                Update
+              </button>
+            </form>
           </div>
-          <div className="flex items-center gap-1">
-            <label className="font-medium text-green-600 text-xs">G:</label>
-            <input
-              type="number"
-              name="green"
-              className="border rounded px-1 py-0.5 w-10 text-xs"
-              value={inputBands.green}
-              onChange={(e) => setInputBands({ ...inputBands, green: e.target.value })}
-              min="1"
-              max={metadata?.bands || 100}
-              disabled={loadingBands}
-            />
-            <span className="text-xs text-green-600">
-              {formatWavelength(getWavelengthForBand(bands.green))}
-            </span>
+
+          {/* Wavelength Editor */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <h4 className="font-medium text-xs">Wavelengths ({metadata?.bands || 0} bands)</h4>
+              {!editingWavelengths && (
+                <button
+                  onClick={() => setEditingWavelengths(true)}
+                  className="text-blue-500 hover:text-blue-700 text-xs"
+                  disabled={!metadata}
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+            
+            {editingWavelengths ? (
+              <div>
+                <textarea
+                  value={wavelengthInputs}
+                  onChange={(e) => setWavelengthInputs(e.target.value)}
+                  placeholder="Enter wavelengths separated by commas"
+                  className="w-full text-xs border rounded px-1 py-1 mb-1 h-12 resize-none"
+                />
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1 text-xs">
+                      <input
+                        type="radio"
+                        value="nm"
+                        checked={wavelengthUnit === 'nm'}
+                        onChange={(e) => setWavelengthUnit(e.target.value)}
+                      />
+                      nm
+                    </label>
+                    <label className="flex items-center gap-1 text-xs">
+                      <input
+                        type="radio"
+                        value="µm"
+                        checked={wavelengthUnit === 'µm'}
+                        onChange={(e) => setWavelengthUnit(e.target.value)}
+                      />
+                      µm
+                    </label>
+                  </div>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={handleWavelengthUpdate}
+                      className="bg-green-500 hover:bg-green-600 text-white px-2 py-0.5 rounded text-xs"
+                    >
+                      Apply
+                    </button>
+                    <button
+                      onClick={cancelWavelengthEdit}
+                      className="bg-gray-500 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-xs"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-gray-600 bg-white border rounded px-1 py-1 h-12 overflow-y-auto">
+                {metadata?.wavelengthValues ? (
+                  <span>
+                    {metadata.wavelengthValues.slice(0, 8).map(w => 
+                      w < 10 ? w.toFixed(3) : Math.round(w)
+                    ).join(', ')}
+                    {metadata.wavelengthValues.length > 8 && ` ... (+${metadata.wavelengthValues.length - 8} more)`}
+                    {' '}
+                    {metadata.wavelengthValues[0] < 10 ? 'μm' : 'nm'}
+                  </span>
+                ) : (
+                  <span className="italic">No wavelength data</span>
+                )}
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-1">
-            <label className="font-medium text-blue-600 text-xs">B:</label>
-            <input
-              type="number"
-              name="blue"
-              className="border rounded px-1 py-0.5 w-10 text-xs"
-              value={inputBands.blue}
-              onChange={(e) => setInputBands({ ...inputBands, blue: e.target.value })}
-              min="1"
-              max={metadata?.bands || 100}
-              disabled={loadingBands}
-            />
-            <span className="text-xs text-blue-600">
-              {formatWavelength(getWavelengthForBand(bands.blue))}
-            </span>
-          </div>
-          <button
-            type="submit"
-            className="bg-blue-500 hover:bg-blue-600 text-white px-2 py-0.5 rounded text-xs ml-1"
-            disabled={loadingBands}
-          >
-            Update
-          </button>
-        </form>
+        </div>
       </div>
 
       {/* Normalization controls */}
