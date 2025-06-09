@@ -1115,13 +1115,41 @@ const ImageRenderer = ({
         
         if (!hasMultipleImages && firstSpectrum.length > 0) {
           const sortedData = [...firstSpectrum].sort((a, b) => a.wavelength - b.wavelength);
-          const exactIndex = relativeX * (sortedData.length - 1);
-          const dataIndex = Math.round(exactIndex);
+          const hasRealWavelengths = spectralDataArray[0]?.metadata?.wavelengthValues && spectralDataArray[0].metadata.wavelengthValues.length > 0;
           
-          if (dataIndex >= 0 && dataIndex < sortedData.length) {
-            cursorWavelength = sortedData[dataIndex].wavelength;
-            cursorBand = sortedData[dataIndex].band;
+          if (hasRealWavelengths) {
+            // Calculate wavelength based on linear interpolation of actual wavelength values
+            const spectrumMinWl = Math.min(...sortedData.map(d => d.wavelength));
+            const spectrumMaxWl = Math.max(...sortedData.map(d => d.wavelength));
+            const spectrumRange = spectrumMaxWl - spectrumMinWl;
+            
+            cursorWavelength = spectrumMinWl + relativeX * spectrumRange;
+            
+            // Find the closest band for reference
+            let closestIndex = 0;
+            let minDiff = Math.abs(sortedData[0].wavelength - cursorWavelength);
+            
+            for (let i = 1; i < sortedData.length; i++) {
+              const diff = Math.abs(sortedData[i].wavelength - cursorWavelength);
+              if (diff < minDiff) {
+                minDiff = diff;
+                closestIndex = i;
+              }
+            }
+            cursorBand = sortedData[closestIndex].band;
+          } else {
+            // Fallback to band-based calculation
+            const exactIndex = relativeX * (sortedData.length - 1);
+            const dataIndex = Math.round(exactIndex);
+            
+            if (dataIndex >= 0 && dataIndex < sortedData.length) {
+              cursorWavelength = sortedData[dataIndex].wavelength;
+              cursorBand = sortedData[dataIndex].band;
+            }
           }
+        } else if (hasMultipleImages && globalWavelength) {
+          // Use the calculated global wavelength
+          cursorWavelength = globalWavelength;
         }
 
         // Only set hover point if we have at least one valid hover point
