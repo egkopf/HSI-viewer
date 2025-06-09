@@ -4,6 +4,10 @@ import { parseGeoTIFF, parseGeoTIFFBands } from '../utils/parseGeoTIFF';
 
 const FileUpload = ({ onDataReady }) => {
   const [processing, setProcessing] = useState(false);
+  const [showWavelengthInput, setShowWavelengthInput] = useState(false);
+  const [wavelengthInputValue, setWavelengthInputValue] = useState('');
+  const [wavelengthUnit, setWavelengthUnit] = useState('nm');
+  const [pendingFileData, setPendingFileData] = useState(null);
 
   const processFiles = async (files) => {
     try {
@@ -34,6 +38,94 @@ const FileUpload = ({ onDataReady }) => {
     }
   };
 
+  const checkWavelengthsAndProceed = (fileData) => {
+    const { metadata } = fileData;
+    
+    // Check if wavelengths are missing or invalid
+    const hasValidWavelengths = metadata.wavelengthValues && 
+                               metadata.wavelengthValues.length === metadata.bands &&
+                               metadata.wavelengthValues.every(w => w > 0);
+
+    if (!hasValidWavelengths) {
+      // Show wavelength input dialog
+      setPendingFileData(fileData);
+      setShowWavelengthInput(true);
+      setProcessing(false);
+      
+      // Generate placeholder wavelengths as suggestion
+      const placeholderWavelengths = [];
+      for (let i = 0; i < metadata.bands; i++) {
+        placeholderWavelengths.push(400 + (i * (900 / (metadata.bands - 1))));
+      }
+      setWavelengthInputValue(placeholderWavelengths.map(w => w.toFixed(0)).join(', '));
+      setWavelengthUnit('nm'); // Reset to nm as default
+    } else {
+      // Wavelengths are valid, proceed normally
+      setProcessing(false);
+      onDataReady(fileData);
+    }
+  };
+
+  const handleWavelengthSubmit = () => {
+    if (!pendingFileData) return;
+
+    try {
+      // Parse the input wavelengths
+      const inputWavelengths = wavelengthInputValue
+        .split(',')
+        .map(w => parseFloat(w.trim()))
+        .filter(w => !isNaN(w) && w > 0);
+
+      // Validate count matches bands
+      if (inputWavelengths.length !== pendingFileData.metadata.bands) {
+        alert(`Please enter exactly ${pendingFileData.metadata.bands} wavelength values to match the number of bands in the file.`);
+        return;
+      }
+
+      // Convert to consistent units (nanometers) if needed
+      const wavelengthsInNm = wavelengthUnit === 'µm' 
+        ? inputWavelengths.map(w => w * 1000) 
+        : inputWavelengths;
+
+      // Update metadata with user-provided wavelengths
+      const updatedMetadata = {
+        ...pendingFileData.metadata,
+        wavelengthValues: wavelengthsInNm,
+        hasRealWavelengths: true,
+        wavelengthSource: `user input (${wavelengthUnit})`
+      };
+
+      const updatedFileData = {
+        ...pendingFileData,
+        metadata: updatedMetadata
+      };
+
+      // Clear the input state
+      setShowWavelengthInput(false);
+      setWavelengthInputValue('');
+      setPendingFileData(null);
+
+      // Proceed with the updated data
+      onDataReady(updatedFileData);
+
+    } catch (error) {
+      console.error('Error processing wavelength input:', error);
+      alert('Invalid wavelength format. Please enter numeric values separated by commas.');
+    }
+  };
+
+  const handleWavelengthCancel = () => {
+    // Proceed without wavelengths
+    setShowWavelengthInput(false);
+    setWavelengthInputValue('');
+    setWavelengthUnit('nm');
+    
+    if (pendingFileData) {
+      onDataReady(pendingFileData);
+      setPendingFileData(null);
+    }
+  };
+
   const processGeoTIFF = async (tiffFile) => {
     console.log(`Processing GeoTIFF: ${tiffFile.name}`);
     
@@ -47,17 +139,17 @@ const FileUpload = ({ onDataReady }) => {
     // Load RGB band data
     const rgbData = await parseGeoTIFFBands(tiffFile, metadata, defaultBands);
 
-    setProcessing(false);
-
-    // Send data to parent
-    onDataReady({
+    const fileData = {
       fileName: tiffFile.name,
       dataFile: tiffFile,
       metadata,
       bandData: rgbData,
       loadedBands: defaultBands,
       fileType: 'geotiff'
-    });
+    };
+
+    // Check wavelengths and potentially show input dialog
+    checkWavelengthsAndProceed(fileData);
   };
 
   const processENVI = async (files) => {
@@ -112,17 +204,17 @@ const FileUpload = ({ onDataReady }) => {
     // Load only the RGB bands
     const rgbData = await parseSpecificBands(dataFile, metadata, defaultBands);
 
-    setProcessing(false);
-
-    // Send the data to parent
-    onDataReady({
+    const fileData = {
       fileName: dataFile.name,
       dataFile,
       metadata,
       bandData: rgbData,
       loadedBands: defaultBands,
       fileType: 'envi'
-    });
+    };
+
+    // Check wavelengths and potentially show input dialog
+    checkWavelengthsAndProceed(fileData);
   };
 
   return (
@@ -132,7 +224,7 @@ const FileUpload = ({ onDataReady }) => {
         accept="*"
         multiple
         onChange={(e) => processFiles(e.target.files)}
-        disabled={processing}
+        disabled={processing || showWavelengthInput}
         className="w-full text-xs"
       />
       
@@ -167,6 +259,63 @@ const FileUpload = ({ onDataReady }) => {
               75% { opacity: 1; }
             }
           `}</style>
+        </div>
+      )}
+
+      {showWavelengthInput && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-4 rounded-lg border border-gray-300 shadow-xl max-w-md w-full mx-4">
+            <div className="text-sm font-medium mb-3">
+              No wavelength data detected. Please enter wavelengths for {pendingFileData?.metadata?.bands} bands:
+            </div>
+            <textarea
+              value={wavelengthInputValue}
+              onChange={(e) => setWavelengthInputValue(e.target.value)}
+              placeholder="Enter wavelengths separated by commas (e.g., 400, 450, 500, 550, 600)"
+              className="w-full text-sm border rounded px-2 py-2 mb-3 h-20 resize-none"
+            />
+            <div className="mb-3">
+              <div className="text-xs text-gray-600 mb-2">
+                Expected: {pendingFileData?.metadata?.bands} values
+              </div>
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-1 text-sm">
+                  <input
+                    type="radio"
+                    value="nm"
+                    checked={wavelengthUnit === 'nm'}
+                    onChange={(e) => setWavelengthUnit(e.target.value)}
+                    className="text-blue-500"
+                  />
+                  Nanometers (nm)
+                </label>
+                <label className="flex items-center gap-1 text-sm">
+                  <input
+                    type="radio"
+                    value="µm"
+                    checked={wavelengthUnit === 'µm'}
+                    onChange={(e) => setWavelengthUnit(e.target.value)}
+                    className="text-blue-500"
+                  />
+                  Micrometers (µm)
+                </label>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleWavelengthSubmit}
+                className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm flex-1"
+              >
+                Apply
+              </button>
+              {/* <button
+                onClick={handleWavelengthCancel}
+                className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded text-sm flex-1"
+              >
+                Skip
+              </button> */}
+            </div>
+          </div>
         </div>
       )}
     </div>
