@@ -114,6 +114,9 @@ const ImageRenderer = ({
     gamma: 0.65
   });
 
+  // Scroll zoom toggle state
+  const [scrollZoomEnabled, setScrollZoomEnabled] = useState(false);
+
   // Initialize bands from metadata when it becomes available
   useEffect(() => {
     if (metadata?.defaultBands) {
@@ -451,10 +454,13 @@ const ImageRenderer = ({
 
   // Handle zoom with mouse wheel
   const handleWheel = useCallback((event) => {
-    // Only prevent default (page scroll) if we're zoomed in
-    if (zoom > 1) {
-      event.preventDefault();
+    // Only handle zoom if scroll zoom is enabled
+    if (!scrollZoomEnabled) {
+      return; // Let the event bubble up for normal page scrolling
     }
+
+    // Prevent default page scroll when zoom is enabled
+    event.preventDefault();
     
     const delta = -event.deltaY;
     const zoomFactor = delta > 0 ? 1.1 : 0.9;
@@ -462,33 +468,28 @@ const ImageRenderer = ({
     
     if (newZoom === zoom) return; // No change if at minimum zoom
     
-    // Only handle zoom if we're changing zoom level or already zoomed
-    if (newZoom > 1 || zoom > 1) {
-      event.preventDefault(); // Prevent page scroll when zooming
+    const container = containerRef.current;
+    if (!container) return;
+    
+    const rect = container.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+    
+    if (newZoom === 1) {
+      // Smooth transition back to base view
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+    } else {
+      // Calculate new pan to keep mouse position stationary
+      const newPan = {
+        x: mouseX - (mouseX - pan.x) * (newZoom / zoom),
+        y: mouseY - (mouseY - pan.y) * (newZoom / zoom)
+      };
       
-      const container = containerRef.current;
-      if (!container) return;
-      
-      const rect = container.getBoundingClientRect();
-      const mouseX = event.clientX - rect.left;
-      const mouseY = event.clientY - rect.top;
-      
-      if (newZoom === 1) {
-        // Smooth transition back to base view
-        setZoom(1);
-        setPan({ x: 0, y: 0 });
-      } else {
-        // Calculate new pan to keep mouse position stationary
-        const newPan = {
-          x: mouseX - (mouseX - pan.x) * (newZoom / zoom),
-          y: mouseY - (mouseY - pan.y) * (newZoom / zoom)
-        };
-        
-        setZoom(newZoom);
-        setPan(newPan);
-      }
+      setZoom(newZoom);
+      setPan(newPan);
     }
-  }, [zoom, pan]);
+  }, [zoom, pan, scrollZoomEnabled]);
 
   // Handle mouse down for panning
   const handleMouseDown = useCallback((event) => {
@@ -571,7 +572,7 @@ const ImageRenderer = ({
     };
 
     container.addEventListener('click', handleCanvasClick);
-    container.addEventListener('wheel', handleWheel, { passive: false });
+    container.addEventListener('wheel', handleWheel, { passive: !scrollZoomEnabled });
     container.addEventListener('mousedown', handleMouseDown);
     container.addEventListener('mousemove', handleMouseMove);
     container.addEventListener('mouseup', handleMouseUp);
@@ -585,7 +586,7 @@ const ImageRenderer = ({
       container.removeEventListener('mouseup', handleMouseUp);
       container.removeEventListener('mouseleave', handleMouseUp);
     };
-  }, [handlePixelClick, currentBandData, metadata, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp]);
+  }, [handlePixelClick, currentBandData, metadata, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp, scrollZoomEnabled]);
 
   // Handle clicking outside the graph
   useEffect(() => {
@@ -693,7 +694,7 @@ const ImageRenderer = ({
       }
 
       setEditingWavelengths(false);
-      alert('Wavelengths updated successfully!');
+      // alert('Wavelengths updated successfully!');
     } catch (error) {
       alert('Invalid wavelength format. Please enter numeric values separated by commas.');
     }
@@ -1548,7 +1549,20 @@ const ImageRenderer = ({
 
       {/* Normalization controls */}
       <div className="mb-2 p-2 bg-gray-50 rounded">
-        <h4 className="font-medium mb-1 text-xs">Enhancement</h4>
+        <div className="flex items-center justify-between mb-1">
+          <h4 className="font-medium text-xs">Enhancement</h4>
+          <button
+            onClick={() => setScrollZoomEnabled(!scrollZoomEnabled)}
+            className={`text-xs px-2 py-1 rounded border ${
+              scrollZoomEnabled 
+                ? 'bg-blue-500 text-white border-blue-500 hover:bg-blue-600' 
+                : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+            }`}
+            title={scrollZoomEnabled ? 'Scroll to zoom (enabled)' : 'Scroll to zoom (disabled)'}
+          >
+            🔍
+          </button>
+        </div>
         <div className="grid grid-cols-3 gap-1">
           <div>
             <label className="block text-xs text-gray-600 mb-0.5">
@@ -1608,7 +1622,7 @@ const ImageRenderer = ({
 
       {/* Zoom info */}
       <div className="mb-2 text-xs text-gray-600">
-        Zoom: {zoom.toFixed(1)}x | Mouse wheel to zoom{zoom > 1 ? ', drag to pan' : ''}
+        Zoom: {zoom.toFixed(1)}x | {scrollZoomEnabled ? 'Mouse wheel to zoom' : 'Click scroll button to enable zoom'}{zoom > 1 ? ', drag to pan' : ''}
       </div>
 
       {/* Image container with zoom and pan */}
