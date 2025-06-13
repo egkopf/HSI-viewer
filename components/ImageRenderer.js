@@ -450,7 +450,7 @@ const ImageRenderer = ({
       console.error('Error extracting pixel spectrum:', error);
       alert('Failed to extract spectral data: ' + error.message);
     }
-  }, [dataFile, metadata, enableSharedSpectral, sharedContext, displayToImageCoords, hasDragged]);
+  }, [dataFile, metadata, enableSharedSpectral, sharedContext, displayToImageCoords, hasDragged, isMainSpectralDisplay]);
 
   // Handle zoom with mouse wheel
   const handleWheel = useCallback((event) => {
@@ -586,7 +586,7 @@ const ImageRenderer = ({
       container.removeEventListener('mouseup', handleMouseUp);
       container.removeEventListener('mouseleave', handleMouseUp);
     };
-  }, [handlePixelClick, currentBandData, metadata, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp, scrollZoomEnabled]);
+  }, [handlePixelClick, currentBandData, metadata, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp, scrollZoomEnabled, displayToImageCoords, hasDragged]);
 
   // Handle clicking outside the graph
   useEffect(() => {
@@ -605,16 +605,16 @@ const ImageRenderer = ({
     return () => {
       document.removeEventListener('click', handleOutsideClick);
     };
-  }, [showSpectralGraph]);
+  }, [showSpectralGraph, setShowSpectralGraph]);
 
-  const clearAllSpectra = () => {
+  const clearAllSpectra = useCallback(() => {
     if (enableSharedSpectral) {
       sharedContext.clearAllSpectralData();
     } else {
       setLocalSpectralData([]);
       setLocalShowSpectral(false);
     }
-  };
+  }, [enableSharedSpectral, sharedContext]);
 
   useEffect(() => {
     if (enableSharedSpectral) {
@@ -623,7 +623,7 @@ const ImageRenderer = ({
       setLocalSpectralData([]);
       setLocalShowSpectral(false);
     }
-  }, [dataFile]);
+  }, [dataFile, enableSharedSpectral, sharedContext]);
 
   // Handle form submission for band selection
   const handleSubmit = async (e) => {
@@ -1395,7 +1395,7 @@ const ImageRenderer = ({
         </div>
       </div>
     );
-  }, [spectralDataArray, shouldShowSpectralGraph, metadata, bands, hoveredPoint, cursorPosition, editingIndex, editingName, enableSharedSpectral, sharedContext]);
+  }, [spectralDataArray, shouldShowSpectralGraph, metadata, bands, hoveredPoint, cursorPosition, editingIndex, editingName, enableSharedSpectral, sharedContext, clearAllSpectra, setShowSpectralGraph]);
 
   return (
     <div className="relative">

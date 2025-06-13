@@ -285,12 +285,24 @@ if (interleave.toLowerCase() === 'bsq') {
       }
     }
   }
-  // For BIP format, we need to read by pixels (optimized with chunked reads)
-  else {
-  // BIP format - Band Interleaved by Pixel
+
+  // Memory-optimized BIP processing with smaller chunks and yielding
+
+else {
+  // BIP format - Band Interleaved by Pixel (MEMORY OPTIMIZED)
+  console.log(`🚀 BIP processing: ${samples}×${lines}, ${bands} bands → extracting ${validBandNumbers.length} bands`);
+  
+  const startTime = performance.now();
   const bytesPerPixel = 2;
   const bandsPerPixel = bands;
   const pixelsPerLine = samples;
+  const totalPixels = samples * lines;
+  
+  // OPTIMIZATION 1: Much smaller chunks to reduce memory pressure
+  const maxChunkMB = 64; // Reduced from 322MB to 64MB max
+  const bytesPerLine = pixelsPerLine * bandsPerPixel * bytesPerPixel;
+  const linesPerMB = Math.floor((1024 * 1024) / bytesPerLine);
+  const chunkSize = Math.min(maxChunkMB * linesPerMB, lines, 256); // Cap at 256 lines
   
   // Pre-allocate all arrays
   for (let i = 0; i < validBandNumbers.length; i++) {
@@ -301,70 +313,92 @@ if (interleave.toLowerCase() === 'bsq') {
   }
 
   const bandIndices = validBandNumbers.map(b => b - 1);
-  const numRequestedBands = validBandNumbers.length;
-  
-  // Larger chunks for better I/O efficiency
-  const chunkSize = Math.min(128, lines);
+  const totalChunks = Math.ceil(lines / chunkSize);
+  const lineArrays = new Array(validBandNumbers.length);
+  let pixelsProcessed = 0;
 
-  for (let lineStart = 0; lineStart < lines; lineStart += chunkSize) {
+  // OPTIMIZATION 2: Async processing with yielding to prevent blocking
+  const processChunk = async (chunkIndex, lineStart) => {
     const lineEnd = Math.min(lineStart + chunkSize, lines);
     const linesInChunk = lineEnd - lineStart;
     
     const chunkStartByte = lineStart * pixelsPerLine * bandsPerPixel * bytesPerPixel;
     const chunkSizeBytes = linesInChunk * pixelsPerLine * bandsPerPixel * bytesPerPixel;
 
-    try {
-      const chunkBuffer = await readFileBytes(dataFile, chunkStartByte, chunkSizeBytes);
-      const rawChunkData = createEndianAwareTypedArray(chunkBuffer, isBigEndian, metadata.dataType);
+    const chunkBuffer = await readFileBytes(dataFile, chunkStartByte, chunkSizeBytes);
+    const rawChunkData = createEndianAwareTypedArray(chunkBuffer, isBigEndian, metadata.dataType);
 
-      // Process each line in the chunk with optimized nested loops
-      for (let lineOffset = 0; lineOffset < linesInChunk; lineOffset++) {
-        const actualLine = lineStart + lineOffset;
-        const lineBaseIndex = lineOffset * pixelsPerLine * bandsPerPixel;
+    // Process lines with periodic yielding
+    for (let lineOffset = 0; lineOffset < linesInChunk; lineOffset++) {
+      const actualLine = lineStart + lineOffset;
+      const lineBaseIndex = lineOffset * pixelsPerLine * bandsPerPixel;
+      
+      // Update line arrays once per line
+      for (let i = 0; i < validBandNumbers.length; i++) {
+        lineArrays[i] = bandData[i][actualLine];
+      }
+      
+      // Process all pixels in this line
+      for (let sample = 0; sample < pixelsPerLine; sample++) {
+        const pixelBaseIndex = lineBaseIndex + (sample * bandsPerPixel);
         
-        // Pre-fetch line arrays to avoid repeated lookups
-        const lineArrays = bandData.map(band => band[actualLine]);
-        
-        // Process pixels in batches to improve cache locality
-        const batchSize = 64;
-        for (let sampleStart = 0; sampleStart < pixelsPerLine; sampleStart += batchSize) {
-          const sampleEnd = Math.min(sampleStart + batchSize, pixelsPerLine);
-          
-          for (let sample = sampleStart; sample < sampleEnd; sample++) {
-            const pixelBaseIndex = lineBaseIndex + (sample * bandsPerPixel);
-            
-            // Unroll the inner band loop for better performance
-            if (numRequestedBands === 3) {
-              // Most common case - RGB
-              lineArrays[0][sample] = rawChunkData[pixelBaseIndex + bandIndices[0]];
-              lineArrays[1][sample] = rawChunkData[pixelBaseIndex + bandIndices[1]];
-              lineArrays[2][sample] = rawChunkData[pixelBaseIndex + bandIndices[2]];
-            } else if (numRequestedBands === 1) {
-              // Single band case
-              lineArrays[0][sample] = rawChunkData[pixelBaseIndex + bandIndices[0]];
-            } else {
-              // General case for other numbers of bands
-              for (let i = 0; i < numRequestedBands; i++) {
-                lineArrays[i][sample] = rawChunkData[pixelBaseIndex + bandIndices[i]];
-              }
+        switch (validBandNumbers.length) {
+          case 1:
+            lineArrays[0][sample] = rawChunkData[pixelBaseIndex + bandIndices[0]];
+            break;
+          case 3:
+            lineArrays[0][sample] = rawChunkData[pixelBaseIndex + bandIndices[0]];
+            lineArrays[1][sample] = rawChunkData[pixelBaseIndex + bandIndices[1]];
+            lineArrays[2][sample] = rawChunkData[pixelBaseIndex + bandIndices[2]];
+            break;
+          default:
+            for (let i = 0; i < validBandNumbers.length; i++) {
+              lineArrays[i][sample] = rawChunkData[pixelBaseIndex + bandIndices[i]];
             }
-          }
         }
       }
-    } catch (error) {
-      console.error(`Error reading line chunk ${lineStart}-${lineEnd}:`, error);
-      throw error;
+      
+      pixelsProcessed += pixelsPerLine;
+      
+      // OPTIMIZATION 3: Yield to browser every 50 lines to prevent blocking
+      if (lineOffset % 50 === 0 && lineOffset > 0) {
+        await new Promise(resolve => setTimeout(resolve, 0)); // Yield to browser
+      }
+      
+      // Progress every 500 lines only
+      if ((actualLine + 1) % 500 === 0 || actualLine === lines - 1) {
+        const percentComplete = Math.round(((actualLine + 1) / lines) * 100);
+        const elapsed = (performance.now() - startTime) / 1000;
+        const pixelsPerSecond = Math.round(pixelsProcessed / elapsed);
+        const eta = elapsed * (lines / (actualLine + 1)) - elapsed;
+        
+        console.log(`${percentComplete}% | ${pixelsPerSecond.toLocaleString()} px/s | ETA: ${eta.toFixed(1)}s`);
+      }
     }
 
-    // Progress feedback (less frequent)
-    if (lineEnd % (chunkSize * 4) === 0 || lineEnd === lines) {
-      console.log(`BIP processing: ${Math.round((lineEnd / lines) * 100)}%`);
+    // OPTIMIZATION 4: Force garbage collection hint after each chunk
+    if (window.gc) {
+      window.gc(); // Only works in development with --enable-precise-memory-info
     }
+  };
+
+  // Process all chunks
+  for (let chunkIndex = 0, lineStart = 0; lineStart < lines; chunkIndex++, lineStart += chunkSize) {
+    await processChunk(chunkIndex, lineStart);
+    
+    // OPTIMIZATION 5: Small delay between chunks to let browser breathe
+    await new Promise(resolve => setTimeout(resolve, 10));
   }
-  }
+  
+  const totalTime = (performance.now() - startTime) / 1000;
+  const finalRate = Math.round(pixelsProcessed / totalTime);
+  console.log(`✅ BIP complete: ${totalTime.toFixed(2)}s | ${finalRate.toLocaleString()} px/s`);
+}
 
   return bandData;
 }
+
+
 
 // Extract spectral profile for a single pixel using targeted read
 export async function extractPixelSpectrum(dataFile, metadata, x, y) {
