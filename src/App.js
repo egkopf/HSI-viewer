@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import FileUpload from '../components/FileUpload';
-import ImageRenderer from '../components/ImageRenderer';
-import { SharedSpectralProvider } from '../utils/sharedSpectralContent';
+import FileUpload from './components/FileUpload';
+import ImageRenderer from './components/ImageRenderer';
+import { SharedSpectralProvider } from './utils/sharedSpectralContent';
 
 export default function Home() {
   // Primary file state

@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "test": "react-scripts test",
+    "build": "react-scripts build",
+    "start": "react-scripts start",
     "lint": "next lint"
   },
   "dependencies": {
@@ -15,7 +15,8 @@
     "plotly.js": "^2.35.2",
     "react": "^18",
     "react-dom": "^18",
-    "react-dropzone": "^14.2.9"
+    "react-dropzone": "^14.2.9",
+    "react-scripts": "^5.0.1"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.20",
@@ -23,5 +24,17 @@
     "eslint-config-next": "14.2.15",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
   }
 }
