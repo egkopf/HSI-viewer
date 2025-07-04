@@ -911,9 +911,28 @@ const ImageRenderer = ({
     const graphWidth = chartWidth - (paddingX * 2);
     const graphHeight = chartHeight - (paddingY * 2);
 
+    // Calculate global band range for band number displays
+    let globalMinBand = 1;
+    let globalMaxBand = 1;
+    
+    if (usingBandNumbers || !filteredSpectralDataArray.some(data => 
+      data.metadata?.wavelengthValues && data.metadata.wavelengthValues.length > 0 && !data.metadata?.usingBandNumbers
+    )) {
+      // Find the global band range across all spectra
+      filteredSpectralDataArray.forEach(data => {
+        if (data.spectrum && data.spectrum.length > 0) {
+          const bands = data.spectrum.map(point => point.band || point.wavelength);
+          const minBand = Math.min(...bands);
+          const maxBand = Math.max(...bands);
+          globalMinBand = Math.min(globalMinBand, minBand);
+          globalMaxBand = Math.max(globalMaxBand, maxBand);
+        }
+      });
+    }
+
     // Use global wavelength range for x-axis ticks when multiple images
     const firstSpectrum = filteredSpectralDataArray[0]?.spectrum || [];
-    const xTickCount = Math.min(9, firstSpectrum.length);
+    const xTickCount = Math.min(9, usingBandNumbers ? (globalMaxBand - globalMinBand + 1) : firstSpectrum.length);
     const xTicks = [];
 
     let xAxisLabel = "Band";
@@ -948,8 +967,10 @@ const ImageRenderer = ({
         }
         xAxisLabel = hasMultipleImages ? `Wavelength (${globalUnit})` : (maxWavelength < 10 ? "Wavelength (μm)" : "Wavelength (nm)");
       } else {
+        // Use global band range for tick positioning
+        const bandRange = globalMaxBand - globalMinBand;
         for (let i = 0; i < xTickCount; i++) {
-          const bandNum = Math.floor(1 + i * (firstSpectrum.length - 1) / (xTickCount - 1));
+          const bandNum = Math.floor(globalMinBand + i * bandRange / (xTickCount - 1));
           const xPosition = paddingX + (i / (xTickCount - 1)) * graphWidth;
           xTicks.push({
             x: xPosition,
@@ -1115,19 +1136,35 @@ const ImageRenderer = ({
               };
             }
           } else {
-            // Fallback to equidistant spacing when no wavelength data or using band numbers
-            const exactIndex = relativeX * (sortedData.length - 1);
-            const dataIndex = Math.round(exactIndex);
+            // Handle band number positioning with global band range
+            const cursorBandNumber = globalMinBand + relativeX * (globalMaxBand - globalMinBand);
+            
+            // Find the closest band in this spectrum
+            let closestPoint = null;
+            let minDistance = Infinity;
+            
+            sortedData.forEach(point => {
+              const bandNumber = point.band || point.wavelength;
+              const distance = Math.abs(bandNumber - cursorBandNumber);
+              if (distance < minDistance) {
+                minDistance = distance;
+                closestPoint = point;
+              }
+            });
 
-            if (dataIndex >= 0 && dataIndex < sortedData.length) {
-              const value = sortedData[dataIndex].value;
-              const wavelength = sortedData[dataIndex].wavelength;
-              const xPos = paddingX + (dataIndex / (sortedData.length - 1)) * graphWidth;
+            if (closestPoint) {
+              const value = closestPoint.value;
+              const wavelength = closestPoint.wavelength;
+              const bandNumber = closestPoint.band || closestPoint.wavelength;
+              const bandRange = globalMaxBand - globalMinBand;
+              // Handle single band case (avoid division by zero)
+              const xPos = bandRange === 0 ? paddingX + graphWidth / 2 : paddingX + ((bandNumber - globalMinBand) / bandRange) * graphWidth;
               const yPos = paddingY + graphHeight - ((value - minValue) / (maxValue - minValue) * graphHeight);
 
               specData.hoverPoint = {
                 value,
                 wavelength,
+                band: bandNumber,
                 x: xPos,
                 y: yPos
               };
@@ -1168,13 +1205,26 @@ const ImageRenderer = ({
             }
             cursorBand = sortedData[closestIndex].band;
           } else {
-            // Fallback to band-based calculation
-            const exactIndex = relativeX * (sortedData.length - 1);
-            const dataIndex = Math.round(exactIndex);
+            // Band-based calculation using global band range
+            const cursorBandNumber = globalMinBand + relativeX * (globalMaxBand - globalMinBand);
+            cursorBand = Math.round(cursorBandNumber);
             
-            if (dataIndex >= 0 && dataIndex < sortedData.length) {
-              cursorWavelength = sortedData[dataIndex].wavelength;
-              cursorBand = sortedData[dataIndex].band;
+            // Find the closest actual band in the first spectrum for wavelength display
+            let closestPoint = null;
+            let minDistance = Infinity;
+            
+            sortedData.forEach(point => {
+              const bandNumber = point.band || point.wavelength;
+              const distance = Math.abs(bandNumber - cursorBandNumber);
+              if (distance < minDistance) {
+                minDistance = distance;
+                closestPoint = point;
+              }
+            });
+            
+            if (closestPoint) {
+              cursorWavelength = closestPoint.wavelength;
+              cursorBand = closestPoint.band || closestPoint.wavelength;
             }
           }
         } else if (hasMultipleImages && globalWavelength) {
@@ -1305,9 +1355,12 @@ const ImageRenderer = ({
                 return `${x},${y}`;
               }).join(' ');
             } else {
-              // Fallback to equidistant spacing when no wavelength data exists or using band numbers
-              points = sortedData.map((point, index) => {
-                const x = paddingX + (index / (sortedData.length - 1)) * graphWidth;
+              // Position based on actual band numbers when using band numbers
+              points = sortedData.map((point) => {
+                const bandNumber = point.band || point.wavelength;
+                const bandRange = globalMaxBand - globalMinBand;
+                // Handle single band case (avoid division by zero)
+                const x = bandRange === 0 ? paddingX + graphWidth / 2 : paddingX + ((bandNumber - globalMinBand) / bandRange) * graphWidth;
                 const y = paddingY + graphHeight - ((point.value - minValue) / (maxValue - minValue) * graphHeight);
                 return `${x},${y}`;
               }).join(' ');
