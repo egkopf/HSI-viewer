@@ -1492,15 +1492,28 @@ const ImageRenderer = ({
                       <div
                         className="w-3 h-3 rounded-sm mr-2 flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 hover:ring-opacity-50 transition-all"
                         style={{ backgroundColor: specData.color }}
-                        onClick={(e) => {
+                        onMouseDown={(e) => {
+                          e.preventDefault();
                           e.stopPropagation();
-                          setColorPickerIndex(colorPickerIndex === index ? null : index);
+                          setColorPickerIndex(index);
                         }}
                         title="Click to change color"
                       ></div>
                       {colorPickerIndex === index && (
-                        <div className="color-picker-container absolute top-full left-0 mt-1 z-50 bg-white border border-gray-300 rounded-lg shadow-lg p-2">
-                          <div className="grid grid-cols-6 gap-1">
+                        <>
+                          <div 
+                            className="fixed inset-0 bg-black bg-opacity-25 z-[9998]"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setColorPickerIndex(null);
+                            }}
+                          />
+                          <div className="color-picker-container fixed bg-white border border-gray-300 rounded-lg shadow-xl p-3 min-w-max z-[9999]" style={{ 
+                            top: '50%', 
+                            left: '50%', 
+                            transform: 'translate(-50%, -50%)'
+                          }}>
+                          <div className="grid grid-cols-6 gap-2">
                             {[
                               '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6',
                               '#8b5cf6', '#ec4899', '#94a3b8', '#374151', '#dc2626', '#ea580c',
@@ -1509,16 +1522,17 @@ const ImageRenderer = ({
                             ].map((color) => (
                               <div
                                 key={color}
-                                className="w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform border border-gray-200"
+                                className="w-5 h-5 rounded cursor-pointer hover:scale-110 transition-transform border border-gray-200 hover:border-gray-400"
                                 style={{ backgroundColor: color }}
-                                onClick={() => {
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
                                   updateSpectrumColor(index, color);
-                                  setColorPickerIndex(null);
                                 }}
                               />
                             ))}
                           </div>
-                          <div className="mt-2 pt-2 border-t border-gray-200">
+                          <div className="mt-3 pt-3 border-t border-gray-200">
                             <input
                               type="color"
                               value={specData.color}
@@ -1530,12 +1544,17 @@ const ImageRenderer = ({
                             />
                           </div>
                           <button
-                            className="mt-2 text-xs text-gray-500 hover:text-gray-700 w-full text-center"
-                            onClick={() => setColorPickerIndex(null)}
+                            className="mt-3 text-xs text-gray-500 hover:text-gray-700 w-full text-center py-1 hover:bg-gray-100 rounded"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setColorPickerIndex(null);
+                            }}
                           >
                             Close
                           </button>
-                        </div>
+                          </div>
+                        </>
                       )}
                     </div>
                     {editingIndex === index ? (
