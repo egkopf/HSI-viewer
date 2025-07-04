@@ -27,7 +27,8 @@ const ExportButton = ({ svgRef, fileName = "spectral-profile" }) => {
   return (
     <button
       onClick={handleExport}
-      className="text-blue-500 hover:text-blue-700 text-sm mr-2"
+      className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50"
+      title="Export as SVG"
     >
       Export
     </button>
@@ -904,10 +905,10 @@ const ImageRenderer = ({
       bandPositions.blue = (bands.blue - 1) / (metadata.bands - 1);
     }
 
-    const chartWidth = 300;
-    const chartHeight = 200;
-    const paddingX = 50;
-    const paddingY = 30;
+    const chartWidth = 480;
+    const chartHeight = 260;
+    const paddingX = 60;
+    const paddingY = 40;
     const graphWidth = chartWidth - (paddingX * 2);
     const graphHeight = chartHeight - (paddingY * 2);
 
@@ -1255,37 +1256,55 @@ const ImageRenderer = ({
     };
 
     return (
-      <div className="spectral-graph fixed bg-white border border-gray-300 shadow-lg p-4" style={{ left: '20px', bottom: '20px', zIndex: 1000 }}>
-        <div className="flex justify-between items-center mb-2">
-          <h3 className="text-sm font-semibold">
-            Spectral Profiles ({filteredSpectralDataArray.length} pixels)&nbsp;&nbsp;
-            {usingBandNumbers && (
-              <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
-                Using band numbers
+      <div className="spectral-graph fixed bg-white border border-gray-200 shadow-xl rounded-lg overflow-hidden" style={{ left: '20px', bottom: '20px', zIndex: 1000 }}>
+        {/* Header */}
+        <div className="bg-gray-50 border-b border-gray-200 px-3 py-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <h3 className="text-sm font-medium text-gray-900">
+                Spectral Profiles
+              </h3>
+              <span className="text-xs text-gray-500">
+                ({filteredSpectralDataArray.length} pixels)
               </span>
-            )}
-            {spectralDataArray.length > filteredSpectralDataArray.length && (
-              <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded ml-2">
-                {spectralDataArray.length - filteredSpectralDataArray.length} incompatible spectra hidden
-              </span>
-            )}
-          </h3>
-          <div>
-            <ExportButton svgRef={svgRef} fileName={`spectral-profile-${new Date().toISOString().slice(0, 10)}`} />
-            <button
-              className="text-red-500 hover:text-red-700 mx-2"
-              onClick={clearAllSpectra}
-            >
-              Clear All
-            </button>
-            <button
-              className="text-gray-500 hover:text-gray-700"
-              onClick={() => setShowSpectralGraph(false)}
-            >
-              ×
-            </button>
+            </div>
+            <div className="flex items-center space-x-1">
+              <ExportButton svgRef={svgRef} fileName={`spectral-profile-${new Date().toISOString().slice(0, 10)}`} />
+              <button
+                className="text-xs text-red-600 hover:text-red-800 px-2 py-1 rounded hover:bg-red-50"
+                onClick={clearAllSpectra}
+                title="Clear all spectra"
+              >
+                Clear
+              </button>
+              <button
+                className="text-gray-400 hover:text-gray-600 w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100"
+                onClick={() => setShowSpectralGraph(false)}
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
           </div>
+          {/* Status indicators */}
+          {(usingBandNumbers || spectralDataArray.length > filteredSpectralDataArray.length) && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {usingBandNumbers && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">
+                  Band numbers
+                </span>
+              )}
+              {spectralDataArray.length > filteredSpectralDataArray.length && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                  {spectralDataArray.length - filteredSpectralDataArray.length} hidden
+                </span>
+              )}
+            </div>
+          )}
         </div>
+        
+        {/* Chart area */}
+        <div className="p-3">
         <svg ref={svgRef} width={chartWidth} height={chartHeight} className="bg-gray-50" onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave}>
           {yTicks.map((tick, i) => (
             <line
@@ -1431,60 +1450,73 @@ const ImageRenderer = ({
             </text>
           )}
 
-          <text x={chartWidth / 2} y={chartHeight - 5} fontSize="10" textAnchor="middle">{xAxisLabel}</text>
-          <text x={15} y={paddingY + (graphHeight / 2)} fontSize="10" textAnchor="middle"
+          <text x={chartWidth / 2} y={chartHeight - 5} fontSize="10" textAnchor="middle" fill="#6b7280">{xAxisLabel}</text>
+          <text x={15} y={paddingY + (graphHeight / 2)} fontSize="10" textAnchor="middle" fill="#6b7280"
             transform={`rotate(-90, 15, ${paddingY + (graphHeight / 2)})`}>Digital Number (DN)</text>
         </svg>
+        </div>
 
-        <div className="mt-2">
-          {spectralDataArray.map((specData, index) => (
-            <div key={`legend-${index}`} className="flex items-center justify-between text-xs mb-1">
-              <div className="flex items-center">
-                <div
-                  className="w-3 h-3 mr-1"
-                  style={{ backgroundColor: specData.color }}
-                ></div>
-                {editingIndex === index ? (
-                  <input
-                    type="text"
-                    value={editingName}
-                    onChange={(e) => setEditingName(e.target.value)}
-                    onBlur={saveEdit}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') saveEdit();
-                      if (e.key === 'Escape') cancelEdit();
-                    }}
-                    className="text-xs border rounded px-1"
-                    autoFocus
-                  />
-                ) : (
-                  <span
-                    className="cursor-pointer hover:underline"
+        {/* Legend */}
+        {spectralDataArray.length > 0 && (
+          <div className="border-t border-gray-200 bg-gray-50 px-3 py-2 max-h-32 overflow-y-auto">
+            <div className="space-y-1">
+              {spectralDataArray.map((specData, index) => (
+                <div key={`legend-${index}`} className="flex items-center justify-between group">
+                  <div className="flex items-center min-w-0 flex-1">
+                    <div
+                      className="w-3 h-3 rounded-sm mr-2 flex-shrink-0"
+                      style={{ backgroundColor: specData.color }}
+                    ></div>
+                    {editingIndex === index ? (
+                      <input
+                        type="text"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        onBlur={saveEdit}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveEdit();
+                          if (e.key === 'Escape') cancelEdit();
+                        }}
+                        className="text-xs border border-gray-300 rounded px-1 py-0.5 bg-white flex-1 min-w-0"
+                        autoFocus
+                      />
+                    ) : (
+                      <div 
+                        className="cursor-pointer hover:text-gray-900 flex-1 min-w-0 text-xs text-gray-700"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startEditing(index);
+                        }}
+                      >
+                        {specData.imageSource && (
+                          <span className="text-gray-400 mr-1">[{specData.imageSource}]</span>
+                        )}
+                        <span className="truncate">
+                          {specData.name}
+                          {specData.hoverPoint && (
+                            <span className="text-gray-500 ml-1">
+                              - {Math.round(specData.hoverPoint.value)}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className="text-gray-400 hover:text-red-500 ml-2 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
                     onClick={(e) => {
                       e.stopPropagation();
-                      startEditing(index);
+                      removeSpectrum(index);
                     }}
+                    title="Remove spectrum"
                   >
-                    {specData.imageSource && (
-                      <span className="text-gray-500 text-xs mr-1">[{specData.imageSource}]</span>
-                    )}
-                    {specData.name}
-                    {specData.hoverPoint && ` - ${Math.round(specData.hoverPoint.value)}`}
-                  </span>
-                )}
-              </div>
-              <button
-                className="text-gray-500 hover:text-red-500 ml-2"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeSpectrum(index);
-                }}
-              >
-                ×
-              </button>
+                    ×
+                  </button>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+        )}
       </div>
     );
   }, [filteredSpectralDataArray, shouldShowSpectralGraph, metadata, bands, hoveredPoint, cursorPosition, editingIndex, editingName, enableSharedSpectral, sharedContext, clearAllSpectra, setShowSpectralGraph, usingBandNumbers]);
