@@ -2,7 +2,7 @@
 
 The **Frontend Viewer for Hyperspectral Data** is a component of the Hyperspectral Imaging Open Ecosystem lab at Yale University. The Viewer was developed by Ethan Kopf, Bai Xue, and Malia Kuo.
 
-The Viewer uses React with Next.js, JavaScript, and HTML/CSS to create a web-based viewer for hyperspectral imaging data that supports file parsing, image rendering, and interactive spectral profile analysis.
+The Viewer uses React with Create React App (CRA), JavaScript, and HTML/CSS to create a web-based viewer for hyperspectral imaging data that supports file parsing, image rendering, and interactive spectral profile analysis.
 
 ## Getting Started
 
@@ -11,13 +11,13 @@ The Viewer uses React with Next.js, JavaScript, and HTML/CSS to create a web-bas
 First, run the development server:
 
 ```bash
-npm run dev
+npm start
 # or
-yarn dev
+yarn start
 # or
-pnpm dev
+pnpm start
 # or
-bun dev
+bun start
 ```
 
 Then open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
@@ -36,20 +36,18 @@ pnpm build
 bun run build
 ```
 
-This will create a `.next` folder containing the optimized production build.
+This will create a `build` folder containing the optimized production build.
 
 ### Running Production Build
 
-After building, you can start the production server:
+After building, you can serve the production build using a static file server:
 
 ```bash
-npm start
-# or
-yarn start
-# or
-pnpm start
-# or
-bun start
+# Install serve globally if not already installed
+npm install -g serve
+
+# Serve the build folder
+serve -s build
 ```
 
 The production server will be available at http://localhost:3000.
