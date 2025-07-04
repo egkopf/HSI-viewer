@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import FileUpload from './components/FileUpload';
 import ImageRenderer from './components/ImageRenderer';
+import ResizableSplitter from './components/ResizableSplitter';
 import { SharedSpectralProvider } from './utils/sharedSpectralContent';
 
 export default function Home() {
@@ -112,9 +113,9 @@ export default function Home() {
         {/* Main Content Area - Takes remaining height */}
         <div className="flex-1 min-h-0">
           {hasBothFiles ? (
-            // Two-file layout
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 h-full">
-              <div className="flex flex-col min-h-0">
+            // Two-file layout with resizable splitter
+            <ResizableSplitter defaultLeftWidth={50} minWidth={25}>
+              <div className="flex flex-col min-h-0 h-full">
                 {/* <h3 className="text-sm font-semibold mb-1">File 1: {fileName1}</h3> */}
                 <div className="flex-1 min-h-0">
                   <ImageRenderer
@@ -128,7 +129,7 @@ export default function Home() {
                   />
                 </div>
               </div>
-              <div className="flex flex-col min-h-0">
+              <div className="flex flex-col min-h-0 h-full">
                 {/* <h3 className="text-sm font-semibold mb-1">File 2: {fileName2}</h3> */}
                 <div className="flex-1 min-h-0">
                   <ImageRenderer
@@ -142,7 +143,7 @@ export default function Home() {
                   />
                 </div>
               </div>
-            </div>
+            </ResizableSplitter>
           ) : hasFile1 ? (
             // Single file layout (File 1)
             <div className="h-full flex flex-col">
