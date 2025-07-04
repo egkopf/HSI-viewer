@@ -907,8 +907,8 @@ const ImageRenderer = ({
 
     const chartWidth = 480;
     const chartHeight = 260;
-    const paddingX = 60;
-    const paddingY = 40;
+    const paddingX = 50;
+    const paddingY = 30;
     const graphWidth = chartWidth - (paddingX * 2);
     const graphHeight = chartHeight - (paddingY * 2);
 
@@ -1256,7 +1256,7 @@ const ImageRenderer = ({
     };
 
     return (
-      <div className="spectral-graph fixed bg-white border border-gray-200 shadow-xl rounded-lg overflow-hidden" style={{ left: '20px', bottom: '20px', zIndex: 1000 }}>
+      <div className="spectral-graph fixed bg-white border border-gray-200 shadow-xl rounded-lg overflow-hidden" style={{ left: '20px', bottom: '20px', zIndex: 1000, width: '520px', minWidth: 'fit-content' }}>
         {/* Header */}
         <div className="bg-gray-50 border-b border-gray-200 px-3 py-2">
           <div className="flex items-center justify-between">
@@ -1524,134 +1524,128 @@ const ImageRenderer = ({
   return (
     <div className="relative">
       {/* Band Selection and Wavelength Editor Controls */}
-      <div className="mb-2 bg-gray-50 border border-gray-200 rounded-md p-3">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Band Selection - Left Side */}
+      <div className="mb-2 p-2 bg-gray-50 rounded">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {/* Band Selection */}
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <h4 className="font-medium text-xs text-gray-700">RGB Bands</h4>
-              {loadingBands && (
-                <span className="text-xs text-blue-600">Loading...</span>
-              )}
-            </div>
-            
+            <h4 className="font-medium mb-1 text-xs">Band Selection</h4>
+            {loadingBands && <p className="text-blue-600 mb-1 text-xs">Loading...</p>}
             <form onSubmit={handleSubmit} className="space-y-2">
-              <div className="flex items-center gap-3">
+              <div className="flex gap-1 items-center flex-wrap">
                 <div className="flex items-center gap-1">
-                  <label className="text-xs font-medium text-red-600">R</label>
+                  <label className="font-medium text-red-600 text-xs">R:</label>
                   <input
                     type="number"
                     name="red"
-                    className="w-12 border border-gray-300 rounded px-1 py-0.5 text-xs text-center focus:ring-1 focus:ring-red-500 focus:border-red-500"
+                    className="border rounded px-1 py-0.5 w-10 text-xs"
                     value={inputBands.red}
                     onChange={(e) => setInputBands({ ...inputBands, red: e.target.value })}
                     min="1"
                     max={metadata?.bands || 100}
                     disabled={loadingBands}
                   />
-                  {!usingBandNumbers && (
-                    <span className="text-xs text-red-500">
-                      {formatWavelength(getWavelengthForBand(bands.red))}
-                    </span>
-                  )}
+                  <span className="text-xs text-red-600">
+                    {!usingBandNumbers && formatWavelength(getWavelengthForBand(bands.red))}
+                  </span>
                 </div>
-                
                 <div className="flex items-center gap-1">
-                  <label className="text-xs font-medium text-green-600">G</label>
+                  <label className="font-medium text-green-600 text-xs">G:</label>
                   <input
                     type="number"
                     name="green"
-                    className="w-12 border border-gray-300 rounded px-1 py-0.5 text-xs text-center focus:ring-1 focus:ring-green-500 focus:border-green-500"
+                    className="border rounded px-1 py-0.5 w-10 text-xs"
                     value={inputBands.green}
                     onChange={(e) => setInputBands({ ...inputBands, green: e.target.value })}
                     min="1"
                     max={metadata?.bands || 100}
                     disabled={loadingBands}
                   />
-                  {!usingBandNumbers && (
-                    <span className="text-xs text-green-500">
-                      {formatWavelength(getWavelengthForBand(bands.green))}
-                    </span>
-                  )}
+                  <span className="text-xs text-green-600">
+                    {!usingBandNumbers && formatWavelength(getWavelengthForBand(bands.green))}
+                  </span>
                 </div>
-                
                 <div className="flex items-center gap-1">
-                  <label className="text-xs font-medium text-blue-600">B</label>
+                  <label className="font-medium text-blue-600 text-xs">B:</label>
                   <input
                     type="number"
                     name="blue"
-                    className="w-12 border border-gray-300 rounded px-1 py-0.5 text-xs text-center focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    className="border rounded px-1 py-0.5 w-10 text-xs"
                     value={inputBands.blue}
                     onChange={(e) => setInputBands({ ...inputBands, blue: e.target.value })}
                     min="1"
                     max={metadata?.bands || 100}
                     disabled={loadingBands}
                   />
-                  {!usingBandNumbers && (
-                    <span className="text-xs text-blue-500">
-                      {formatWavelength(getWavelengthForBand(bands.blue))}
-                    </span>
-                  )}
+                  <span className="text-xs text-blue-600">
+                    {!usingBandNumbers && formatWavelength(getWavelengthForBand(bands.blue))}
+                  </span>
                 </div>
               </div>
-              
               <button
                 type="submit"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-medium disabled:opacity-50"
+                className="bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded text-xs w-full"
                 disabled={loadingBands}
               >
-                Update RGB
+                Update
               </button>
             </form>
           </div>
 
-          {/* Wavelength Editor - Right Side */}
+          {/* Wavelength Editor */}
           <div>
-            <div className="flex items-center gap-2 mb-2">
-              <h4 className="font-medium text-xs text-gray-700">
-                Wavelengths ({metadata?.bands || 0})
+            <div className="flex items-center justify-between mb-1">
+              <h4 className="font-medium text-xs">
+                Wavelengths ({metadata?.bands || 0} bands)
+                {usingBandNumbers && (
+                  <span className="ml-2 text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
+                    Using band numbers
+                  </span>
+                )}
               </h4>
-              {usingBandNumbers && (
-                <span className="text-xs bg-amber-100 text-amber-700 px-1 py-0.5 rounded">
-                  Bands
-                </span>
+              {!editingWavelengths && (
+                <button
+                  onClick={() => setEditingWavelengths(true)}
+                  className="text-blue-500 hover:text-blue-700 text-xs"
+                  disabled={!metadata}
+                >
+                  Edit
+                </button>
               )}
             </div>
-              
+            
             {editingWavelengths ? (
-              <div className="space-y-2">
+              <div>
                 <textarea
                   value={wavelengthInputs}
                   onChange={(e) => setWavelengthInputs(e.target.value)}
                   placeholder="Enter wavelengths separated by commas"
-                  className="w-full text-xs border border-gray-300 rounded px-1 py-1 h-12 resize-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full text-xs border rounded px-1 py-1 mb-1 h-12 resize-none"
                 />
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="text-gray-600">Unit:</span>
-                    <label className="flex items-center gap-1">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1 text-xs">
                       <input
                         type="radio"
                         value="nm"
                         checked={wavelengthUnit === 'nm'}
                         onChange={(e) => setWavelengthUnit(e.target.value)}
                       />
-                      <span>nm</span>
+                      nm
                     </label>
-                    <label className="flex items-center gap-1">
+                    <label className="flex items-center gap-1 text-xs">
                       <input
                         type="radio"
                         value="µm"
                         checked={wavelengthUnit === 'µm'}
                         onChange={(e) => setWavelengthUnit(e.target.value)}
                       />
-                      <span>µm</span>
+                      µm
                     </label>
                   </div>
                   <div className="flex gap-1">
                     <button
                       onClick={handleWavelengthUpdate}
-                      className="bg-green-600 hover:bg-green-700 text-white px-2 py-0.5 rounded text-xs"
+                      className="bg-green-500 hover:bg-green-600 text-white px-2 py-0.5 rounded text-xs"
                     >
                       Apply
                     </button>
@@ -1665,24 +1659,19 @@ const ImageRenderer = ({
                 </div>
               </div>
             ) : (
-              <div 
-                className="text-xs text-gray-600 bg-white border border-gray-200 rounded px-1 py-1 h-8 overflow-y-auto cursor-pointer hover:bg-gray-50 hover:border-blue-300 transition-colors" 
-                onClick={() => metadata && setEditingWavelengths(true)}
-                title={metadata ? "Click to edit wavelengths" : "No data available"}
-              >
+              <div className="text-xs text-gray-600 bg-white border rounded px-1 py-1 h-12 overflow-y-auto">
                 {metadata?.wavelengthValues && !usingBandNumbers ? (
                   <span>
-                    {metadata.wavelengthValues.slice(0, 6).map(w => 
+                    {metadata.wavelengthValues.slice(0, 8).map(w => 
                       w < 10 ? w.toFixed(3) : Math.round(w)
                     ).join(', ')}
-                    {metadata.wavelengthValues.length > 6 && '...'}
+                    {metadata.wavelengthValues.length > 8 && ` ... (+${metadata.wavelengthValues.length - 8} more)`}
                     {' '}
                     {metadata.wavelengthValues[0] < 10 ? 'μm' : 'nm'}
                   </span>
                 ) : (
-                  <span className="italic text-gray-500">
-                    {usingBandNumbers ? 'Band numbers' : 'No wavelength data'}
-                    {metadata && <span className="text-blue-500 ml-1">• Click to edit</span>}
+                  <span className="italic">
+                    {usingBandNumbers ? 'Using band numbers (1, 2, 3, ...)' : 'No wavelength data'}
                   </span>
                 )}
               </div>
