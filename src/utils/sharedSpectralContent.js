@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useCallback } from 'react';
 
 const SharedSpectralContext = createContext();
 
@@ -14,45 +14,47 @@ export const SharedSpectralProvider = ({ children }) => {
   const [sharedSpectralData, setSharedSpectralData] = useState([]);
   const [showSharedSpectralGraph, setShowSharedSpectralGraph] = useState(false);
 
-  const addSpectralData = (spectralData) => {
+  const addSpectralData = useCallback((spectralData) => {
     setSharedSpectralData(prev => [...prev, spectralData]);
     setShowSharedSpectralGraph(true);
-  };
+  }, []);
 
-  const removeSpectralData = (index) => {
+  const removeSpectralData = useCallback((index) => {
     setSharedSpectralData(prev => {
       const newArray = [...prev];
       newArray.splice(index, 1);
+      if (newArray.length === 0) {
+        setShowSharedSpectralGraph(false);
+      }
       return newArray;
     });
-    if (sharedSpectralData.length <= 1) {
-      setShowSharedSpectralGraph(false);
-    }
-  };
+  }, []);
 
-  const clearAllSpectralData = () => {
+  const clearAllSpectralData = useCallback(() => {
     setSharedSpectralData([]);
     setShowSharedSpectralGraph(false);
-  };
+  }, []);
 
-  const updateSpectralData = (index, updates) => {
+  const updateSpectralData = useCallback((index, updates) => {
     setSharedSpectralData(prev => {
       const newArray = [...prev];
       newArray[index] = { ...newArray[index], ...updates };
       return newArray;
     });
+  }, []);
+
+  const contextValue = {
+    sharedSpectralData,
+    showSharedSpectralGraph,
+    setShowSharedSpectralGraph,
+    addSpectralData,
+    removeSpectralData,
+    clearAllSpectralData,
+    updateSpectralData
   };
 
   return (
-    <SharedSpectralContext.Provider value={{
-      sharedSpectralData,
-      showSharedSpectralGraph,
-      setShowSharedSpectralGraph,
-      addSpectralData,
-      removeSpectralData,
-      clearAllSpectralData,
-      updateSpectralData
-    }}>
+    <SharedSpectralContext.Provider value={contextValue}>
       {children}
     </SharedSpectralContext.Provider>
   );

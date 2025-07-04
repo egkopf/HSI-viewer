@@ -623,7 +623,7 @@ const ImageRenderer = ({
       setLocalSpectralData([]);
       setLocalShowSpectral(false);
     }
-  }, [dataFile, enableSharedSpectral, sharedContext]);
+  }, [dataFile, enableSharedSpectral]);
 
   // Handle form submission for band selection
   const handleSubmit = async (e) => {
