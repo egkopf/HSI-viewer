@@ -720,6 +720,29 @@ const ImageRenderer = ({
     setEditingWavelengths(false);
   };
 
+  // Filter spectral data to prevent mixed types (wavelengths vs band numbers)
+  const filteredSpectralDataArray = useMemo(() => {
+    return spectralDataArray.filter((data, index) => {
+      if (!data.spectrum || !data.metadata) return false;
+      
+      // Always include first spectrum
+      if (index === 0) return true;
+      
+      // Check if first spectrum has real wavelengths
+      const firstSpecHasRealWavelengths = spectralDataArray[0].metadata?.wavelengthValues && 
+        spectralDataArray[0].metadata.wavelengthValues.length > 0 && 
+        !spectralDataArray[0].metadata?.usingBandNumbers;
+      
+      // Check if current spectrum has real wavelengths
+      const currentSpecHasRealWavelengths = data.metadata?.wavelengthValues && 
+        data.metadata.wavelengthValues.length > 0 && 
+        !data.metadata?.usingBandNumbers;
+      
+      // Only include if both have same type (both wavelengths or both band numbers)
+      return firstSpecHasRealWavelengths === currentSpecHasRealWavelengths;
+    });
+  }, [spectralDataArray]);
+
   // Only render spectral graph on the main display
   const shouldShowSpectralGraph = isMainSpectralDisplay && showSpectralGraph && spectralDataArray.length > 0;
 
@@ -732,7 +755,7 @@ const ImageRenderer = ({
     let spectrumMin = Infinity;
     let spectrumMax = -Infinity;
 
-    spectralDataArray.forEach(data => {
+    filteredSpectralDataArray.forEach(data => {
       if (!data.spectrum) return;
       data.spectrum.forEach(point => {
         if (point.value < spectrumMin) spectrumMin = point.value;
@@ -762,7 +785,7 @@ const ImageRenderer = ({
       return avgWavelength < 10; // If average is less than 10, likely micrometers
     };
 
-    spectralDataArray.forEach(data => {
+    filteredSpectralDataArray.forEach(data => {
       if (!data.spectrum || !data.metadata) return;
       
       const wavelengths = data.spectrum.map(point => point.wavelength);
@@ -889,7 +912,7 @@ const ImageRenderer = ({
     const graphHeight = chartHeight - (paddingY * 2);
 
     // Use global wavelength range for x-axis ticks when multiple images
-    const firstSpectrum = spectralDataArray[0]?.spectrum || [];
+    const firstSpectrum = filteredSpectralDataArray[0]?.spectrum || [];
     const xTickCount = Math.min(9, firstSpectrum.length);
     const xTicks = [];
 
@@ -898,7 +921,7 @@ const ImageRenderer = ({
     if (firstSpectrum.length > 0) {
       const minWavelength = hasMultipleImages ? globalMinWavelength : Math.min(...firstSpectrum.map(d => d.wavelength));
       const maxWavelength = hasMultipleImages ? globalMaxWavelength : Math.max(...firstSpectrum.map(d => d.wavelength));
-      const hasRealWavelengthData = spectralDataArray.some(data => 
+      const hasRealWavelengthData = filteredSpectralDataArray.some(data => 
         data.metadata?.wavelengthValues && data.metadata.wavelengthValues.length > 0 && !data.metadata?.usingBandNumbers
       );
 
@@ -1122,7 +1145,7 @@ const ImageRenderer = ({
         
         if (!hasMultipleImages && firstSpectrum.length > 0) {
           const sortedData = [...firstSpectrum].sort((a, b) => a.wavelength - b.wavelength);
-          const hasRealWavelengths = spectralDataArray[0]?.metadata?.wavelengthValues && spectralDataArray[0].metadata.wavelengthValues.length > 0 && !spectralDataArray[0].metadata?.usingBandNumbers;
+          const hasRealWavelengths = filteredSpectralDataArray[0]?.metadata?.wavelengthValues && filteredSpectralDataArray[0].metadata.wavelengthValues.length > 0 && !filteredSpectralDataArray[0].metadata?.usingBandNumbers;
           
           if (hasRealWavelengths && !usingBandNumbers) {
             // Calculate wavelength based on linear interpolation of actual wavelength values
@@ -1185,10 +1208,15 @@ const ImageRenderer = ({
       <div className="spectral-graph fixed bg-white border border-gray-300 shadow-lg p-4" style={{ left: '20px', bottom: '20px', zIndex: 1000 }}>
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-semibold">
-            Spectral Profiles ({spectralDataArray.length} pixels)&nbsp;&nbsp;
+            Spectral Profiles ({filteredSpectralDataArray.length} pixels)&nbsp;&nbsp;
             {usingBandNumbers && (
               <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
                 Using band numbers
+              </span>
+            )}
+            {spectralDataArray.length > filteredSpectralDataArray.length && (
+              <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded ml-2">
+                {spectralDataArray.length - filteredSpectralDataArray.length} incompatible spectra hidden
               </span>
             )}
           </h3>
@@ -1250,7 +1278,7 @@ const ImageRenderer = ({
             </React.Fragment>
           ))}
 
-          {spectralDataArray.map((specData, specIndex) => {
+          {filteredSpectralDataArray.map((specData, specIndex) => {
             if (!specData.spectrum || specData.spectrum.length === 0) return null;
 
             const sortedData = [...specData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
@@ -1341,7 +1369,7 @@ const ImageRenderer = ({
               textAnchor="middle" 
               fill="#666"
             >
-              {spectralDataArray.some(data => data.metadata?.wavelengthValues && data.metadata.wavelengthValues.length > 0 && !data.metadata?.usingBandNumbers)
+              {filteredSpectralDataArray.some(data => data.metadata?.wavelengthValues && data.metadata.wavelengthValues.length > 0 && !data.metadata?.usingBandNumbers)
                 ? (hoveredPoint.wavelength < 10 
                     ? `${hoveredPoint.wavelength.toFixed(2)} μm`
                     : `${Math.round(hoveredPoint.wavelength)} nm`)
@@ -1406,7 +1434,7 @@ const ImageRenderer = ({
         </div>
       </div>
     );
-  }, [spectralDataArray, shouldShowSpectralGraph, metadata, bands, hoveredPoint, cursorPosition, editingIndex, editingName, enableSharedSpectral, sharedContext, clearAllSpectra, setShowSpectralGraph, usingBandNumbers]);
+  }, [filteredSpectralDataArray, shouldShowSpectralGraph, metadata, bands, hoveredPoint, cursorPosition, editingIndex, editingName, enableSharedSpectral, sharedContext, clearAllSpectra, setShowSpectralGraph, usingBandNumbers]);
 
   return (
     <div className="relative">
