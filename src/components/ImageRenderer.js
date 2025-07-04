@@ -112,6 +112,7 @@ const ImageRenderer = ({
   const [cursorPosition, setCursorPosition] = useState(null);
   const [editingIndex, setEditingIndex] = useState(null);
   const [editingName, setEditingName] = useState('');
+  const [colorPickerIndex, setColorPickerIndex] = useState(null);
 
   const [normalizationSettings, setNormalizationSettings] = useState({
     lowerPercentile: 0.01,
@@ -121,6 +122,20 @@ const ImageRenderer = ({
 
   // Scroll zoom toggle state
   const [scrollZoomEnabled, setScrollZoomEnabled] = useState(false);
+
+  // Close color picker when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (colorPickerIndex !== null && !event.target.closest('.color-picker-container')) {
+        setColorPickerIndex(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [colorPickerIndex]);
 
   // Initialize bands from metadata when it becomes available
   useEffect(() => {
@@ -1027,6 +1042,16 @@ const ImageRenderer = ({
       setEditingName('');
     };
 
+    const updateSpectrumColor = (index, newColor) => {
+      if (enableSharedSpectral) {
+        sharedContext.updateSpectralData(index, { color: newColor });
+      } else {
+        const newArray = [...spectralDataArray];
+        newArray[index] = { ...newArray[index], color: newColor };
+        setLocalSpectralData(newArray);
+      }
+    };
+
     const handleMouseMove = (e) => {
       const svgRect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - svgRect.left;
@@ -1463,10 +1488,56 @@ const ImageRenderer = ({
               {spectralDataArray.map((specData, index) => (
                 <div key={`legend-${index}`} className="flex items-center justify-between group">
                   <div className="flex items-center min-w-0 flex-1">
-                    <div
-                      className="w-3 h-3 rounded-sm mr-2 flex-shrink-0"
-                      style={{ backgroundColor: specData.color }}
-                    ></div>
+                    <div className="relative">
+                      <div
+                        className="w-3 h-3 rounded-sm mr-2 flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-400 hover:ring-opacity-50 transition-all"
+                        style={{ backgroundColor: specData.color }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setColorPickerIndex(colorPickerIndex === index ? null : index);
+                        }}
+                        title="Click to change color"
+                      ></div>
+                      {colorPickerIndex === index && (
+                        <div className="color-picker-container absolute top-full left-0 mt-1 z-50 bg-white border border-gray-300 rounded-lg shadow-lg p-2">
+                          <div className="grid grid-cols-6 gap-1">
+                            {[
+                              '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6',
+                              '#8b5cf6', '#ec4899', '#94a3b8', '#374151', '#dc2626', '#ea580c',
+                              '#ca8a04', '#16a34a', '#0891b2', '#2563eb', '#7c3aed', '#db2777',
+                              '#6b7280', '#1f2937', '#fbbf24', '#34d399', '#60a5fa', '#a78bfa'
+                            ].map((color) => (
+                              <div
+                                key={color}
+                                className="w-6 h-6 rounded cursor-pointer hover:scale-110 transition-transform border border-gray-200"
+                                style={{ backgroundColor: color }}
+                                onClick={() => {
+                                  updateSpectrumColor(index, color);
+                                  setColorPickerIndex(null);
+                                }}
+                              />
+                            ))}
+                          </div>
+                          <div className="mt-2 pt-2 border-t border-gray-200">
+                            <input
+                              type="color"
+                              value={specData.color}
+                              onChange={(e) => {
+                                updateSpectrumColor(index, e.target.value);
+                              }}
+                              className="w-full h-8 rounded cursor-pointer"
+                              title="Custom color"
+                            />
+                          </div>
+                          <button
+                            className="mt-2 text-xs text-gray-500 hover:text-gray-700 w-full text-center"
+                            onClick={() => setColorPickerIndex(null)}
+                          >
+                            Close
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     {editingIndex === index ? (
                       <input
                         type="text"
