@@ -39,6 +39,7 @@ const ImageRenderer = ({
   metadata, 
   loadedBands, 
   dataFile, 
+  fileType,
   enableSharedSpectral = false,
   isMainSpectralDisplay = true
 }) => {
@@ -46,6 +47,9 @@ const ImageRenderer = ({
   const overlayCanvasRef = useRef(null);
   const containerRef = useRef(null);
   const svgRef = useRef(null);
+
+  // Check if we're using band numbers instead of wavelengths - MOVE THIS UP EARLY
+  const usingBandNumbers = metadata?.usingBandNumbers === true || (!metadata?.hasRealWavelengths && !metadata?.wavelengthValues);
 
   // Zoom state
   const [zoom, setZoom] = useState(1);
@@ -691,6 +695,7 @@ const ImageRenderer = ({
         metadata.wavelengthValues = wavelengthsInNm;
         metadata.hasRealWavelengths = true;
         metadata.wavelengthSource = `user edit (${wavelengthUnit})`;
+        metadata.usingBandNumbers = false;
       }
 
       setEditingWavelengths(false);
@@ -806,7 +811,7 @@ const ImageRenderer = ({
     }
 
     const bandPositions = {};
-    if (metadata.wavelengthValues) {
+    if (metadata.wavelengthValues && !usingBandNumbers) {
       const wavelengths = metadata.wavelengthValues;
       const currentIsInMicrometers = isInMicrometers(wavelengths);
       
@@ -870,6 +875,7 @@ const ImageRenderer = ({
         bandPositions.blue = 0.15;
       }
     } else {
+      // Using band numbers
       bandPositions.red = (bands.red - 1) / (metadata.bands - 1);
       bandPositions.green = (bands.green - 1) / (metadata.bands - 1);
       bandPositions.blue = (bands.blue - 1) / (metadata.bands - 1);
@@ -893,10 +899,10 @@ const ImageRenderer = ({
       const minWavelength = hasMultipleImages ? globalMinWavelength : Math.min(...firstSpectrum.map(d => d.wavelength));
       const maxWavelength = hasMultipleImages ? globalMaxWavelength : Math.max(...firstSpectrum.map(d => d.wavelength));
       const hasRealWavelengthData = spectralDataArray.some(data => 
-        data.metadata?.wavelengthValues && data.metadata.wavelengthValues.length > 0
+        data.metadata?.wavelengthValues && data.metadata.wavelengthValues.length > 0 && !data.metadata?.usingBandNumbers
       );
 
-      if (hasRealWavelengthData) {
+      if (hasRealWavelengthData && !usingBandNumbers) {
         for (let i = 0; i < xTickCount; i++) {
           const wavelengthValue = minWavelength + (i / (xTickCount - 1)) * (maxWavelength - minWavelength);
           const xPosition = paddingX + (i / (xTickCount - 1)) * graphWidth;
@@ -994,7 +1000,7 @@ const ImageRenderer = ({
 
           const sortedData = [...specData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
           const spectrumIsInMicrometers = isInMicrometers(sortedData.map(d => d.wavelength));
-          const hasRealWavelengths = specData.metadata?.wavelengthValues && specData.metadata.wavelengthValues.length > 0;
+          const hasRealWavelengths = specData.metadata?.wavelengthValues && specData.metadata.wavelengthValues.length > 0 && !specData.metadata?.usingBandNumbers;
           
           if (hasMultipleImages && globalWavelength && hasRealWavelengths) {
             // Convert global wavelength to spectrum's units for comparison
@@ -1050,7 +1056,7 @@ const ImageRenderer = ({
                 y: yPos
               };
             }
-          } else if (hasRealWavelengths) {
+          } else if (hasRealWavelengths && !usingBandNumbers) {
             // Single image with real wavelengths - use actual wavelength spacing
             const spectrumMinWl = Math.min(...sortedData.map(d => d.wavelength));
             const spectrumMaxWl = Math.max(...sortedData.map(d => d.wavelength));
@@ -1086,7 +1092,7 @@ const ImageRenderer = ({
               };
             }
           } else {
-            // Fallback to equidistant spacing when no wavelength data
+            // Fallback to equidistant spacing when no wavelength data or using band numbers
             const exactIndex = relativeX * (sortedData.length - 1);
             const dataIndex = Math.round(exactIndex);
 
@@ -1116,9 +1122,9 @@ const ImageRenderer = ({
         
         if (!hasMultipleImages && firstSpectrum.length > 0) {
           const sortedData = [...firstSpectrum].sort((a, b) => a.wavelength - b.wavelength);
-          const hasRealWavelengths = spectralDataArray[0]?.metadata?.wavelengthValues && spectralDataArray[0].metadata.wavelengthValues.length > 0;
+          const hasRealWavelengths = spectralDataArray[0]?.metadata?.wavelengthValues && spectralDataArray[0].metadata.wavelengthValues.length > 0 && !spectralDataArray[0].metadata?.usingBandNumbers;
           
-          if (hasRealWavelengths) {
+          if (hasRealWavelengths && !usingBandNumbers) {
             // Calculate wavelength based on linear interpolation of actual wavelength values
             const spectrumMinWl = Math.min(...sortedData.map(d => d.wavelength));
             const spectrumMaxWl = Math.max(...sortedData.map(d => d.wavelength));
@@ -1180,6 +1186,11 @@ const ImageRenderer = ({
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-semibold">
             Spectral Profiles ({spectralDataArray.length} pixels)&nbsp;&nbsp;
+            {usingBandNumbers && (
+              <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
+                Using band numbers
+              </span>
+            )}
           </h3>
           <div>
             <ExportButton svgRef={svgRef} fileName={`spectral-profile-${new Date().toISOString().slice(0, 10)}`} />
@@ -1243,10 +1254,10 @@ const ImageRenderer = ({
             if (!specData.spectrum || specData.spectrum.length === 0) return null;
 
             const sortedData = [...specData.spectrum].sort((a, b) => a.wavelength - b.wavelength);
-            const hasRealWavelengths = specData.metadata?.wavelengthValues && specData.metadata.wavelengthValues.length > 0;
+            const hasRealWavelengths = specData.metadata?.wavelengthValues && specData.metadata.wavelengthValues.length > 0 && !specData.metadata?.usingBandNumbers;
 
             let points;
-            if (hasMultipleImages || hasRealWavelengths) {
+            if ((hasMultipleImages || hasRealWavelengths) && !usingBandNumbers) {
               // Use actual wavelength positioning for proper spacing
               const spectrumWavelengths = sortedData.map(d => d.wavelength);
               const spectrumIsInMicrometers = isInMicrometers(spectrumWavelengths);
@@ -1266,7 +1277,7 @@ const ImageRenderer = ({
                 return `${x},${y}`;
               }).join(' ');
             } else {
-              // Fallback to equidistant spacing only when no wavelength data exists
+              // Fallback to equidistant spacing when no wavelength data exists or using band numbers
               points = sortedData.map((point, index) => {
                 const x = paddingX + (index / (sortedData.length - 1)) * graphWidth;
                 const y = paddingY + graphHeight - ((point.value - minValue) / (maxValue - minValue) * graphHeight);
@@ -1302,8 +1313,8 @@ const ImageRenderer = ({
             // NEW: Also check if we're in dual-file mode (enableSharedSpectral indicates dual mode)
             const isDualFileMode = enableSharedSpectral;
             
-            // Only show RGB bands if we don't have pixels from multiple images AND not in dual-file mode
-            if (!hasPixelsFromMultipleImages && !isDualFileMode) {
+            // Only show RGB bands if we don't have pixels from multiple images AND not in dual-file mode AND not using band numbers
+            if (!hasPixelsFromMultipleImages && !isDualFileMode && !usingBandNumbers) {
               return (
                 <>
                   <line x1={paddingX + (bandPositions.red * graphWidth)} y1={paddingY} x2={paddingX + (bandPositions.red * graphWidth)}
@@ -1330,7 +1341,7 @@ const ImageRenderer = ({
               textAnchor="middle" 
               fill="#666"
             >
-              {spectralDataArray.some(data => data.metadata?.wavelengthValues && data.metadata.wavelengthValues.length > 0)
+              {spectralDataArray.some(data => data.metadata?.wavelengthValues && data.metadata.wavelengthValues.length > 0 && !data.metadata?.usingBandNumbers)
                 ? (hoveredPoint.wavelength < 10 
                     ? `${hoveredPoint.wavelength.toFixed(2)} μm`
                     : `${Math.round(hoveredPoint.wavelength)} nm`)
@@ -1395,7 +1406,7 @@ const ImageRenderer = ({
         </div>
       </div>
     );
-  }, [spectralDataArray, shouldShowSpectralGraph, metadata, bands, hoveredPoint, cursorPosition, editingIndex, editingName, enableSharedSpectral, sharedContext, clearAllSpectra, setShowSpectralGraph]);
+  }, [spectralDataArray, shouldShowSpectralGraph, metadata, bands, hoveredPoint, cursorPosition, editingIndex, editingName, enableSharedSpectral, sharedContext, clearAllSpectra, setShowSpectralGraph, usingBandNumbers]);
 
   return (
     <div className="relative">
@@ -1421,7 +1432,7 @@ const ImageRenderer = ({
                     disabled={loadingBands}
                   />
                   <span className="text-xs text-red-600">
-                    {formatWavelength(getWavelengthForBand(bands.red))}
+                    {!usingBandNumbers && formatWavelength(getWavelengthForBand(bands.red))}
                   </span>
                 </div>
                 <div className="flex items-center gap-1">
@@ -1437,7 +1448,7 @@ const ImageRenderer = ({
                     disabled={loadingBands}
                   />
                   <span className="text-xs text-green-600">
-                    {formatWavelength(getWavelengthForBand(bands.green))}
+                    {!usingBandNumbers && formatWavelength(getWavelengthForBand(bands.green))}
                   </span>
                 </div>
                 <div className="flex items-center gap-1">
@@ -1453,7 +1464,7 @@ const ImageRenderer = ({
                     disabled={loadingBands}
                   />
                   <span className="text-xs text-blue-600">
-                    {formatWavelength(getWavelengthForBand(bands.blue))}
+                    {!usingBandNumbers && formatWavelength(getWavelengthForBand(bands.blue))}
                   </span>
                 </div>
               </div>
@@ -1470,7 +1481,14 @@ const ImageRenderer = ({
           {/* Wavelength Editor */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <h4 className="font-medium text-xs">Wavelengths ({metadata?.bands || 0} bands)</h4>
+              <h4 className="font-medium text-xs">
+                Wavelengths ({metadata?.bands || 0} bands)
+                {usingBandNumbers && (
+                  <span className="ml-2 text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
+                    Using band numbers
+                  </span>
+                )}
+              </h4>
               {!editingWavelengths && (
                 <button
                   onClick={() => setEditingWavelengths(true)}
@@ -1529,7 +1547,7 @@ const ImageRenderer = ({
               </div>
             ) : (
               <div className="text-xs text-gray-600 bg-white border rounded px-1 py-1 h-12 overflow-y-auto">
-                {metadata?.wavelengthValues ? (
+                {metadata?.wavelengthValues && !usingBandNumbers ? (
                   <span>
                     {metadata.wavelengthValues.slice(0, 8).map(w => 
                       w < 10 ? w.toFixed(3) : Math.round(w)
@@ -1539,7 +1557,9 @@ const ImageRenderer = ({
                     {metadata.wavelengthValues[0] < 10 ? 'μm' : 'nm'}
                   </span>
                 ) : (
-                  <span className="italic">No wavelength data</span>
+                  <span className="italic">
+                    {usingBandNumbers ? 'Using band numbers (1, 2, 3, ...)' : 'No wavelength data'}
+                  </span>
                 )}
               </div>
             )}

@@ -114,15 +114,27 @@ const FileUpload = ({ onDataReady }) => {
     }
   };
 
-  const handleWavelengthCancel = () => {
-    // Proceed without wavelengths
-    setShowWavelengthInput(false);
-    setWavelengthInputValue('');
-    setWavelengthUnit('nm');
-    
+  const handleSkipWavelengths = () => {
+    // Proceed without wavelengths, mark metadata accordingly
     if (pendingFileData) {
-      onDataReady(pendingFileData);
+      const updatedMetadata = {
+        ...pendingFileData.metadata,
+        wavelengthValues: null,
+        hasRealWavelengths: false,
+        wavelengthSource: 'none - user skipped wavelength input',
+        usingBandNumbers: true
+      };
+
+      const updatedFileData = {
+        ...pendingFileData,
+        metadata: updatedMetadata
+      };
+
+      setShowWavelengthInput(false);
+      setWavelengthInputValue('');
       setPendingFileData(null);
+      
+      onDataReady(updatedFileData);
     }
   };
 
@@ -266,7 +278,7 @@ const FileUpload = ({ onDataReady }) => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-4 rounded-lg border border-gray-300 shadow-xl max-w-md w-full mx-4">
             <div className="text-sm font-medium mb-3">
-              No wavelength data detected. Please enter wavelengths for {pendingFileData?.metadata?.bands} bands:
+              No wavelength data detected. You can optionally provide wavelengths for {pendingFileData?.metadata?.bands} bands:
             </div>
             <textarea
               value={wavelengthInputValue}
@@ -276,7 +288,7 @@ const FileUpload = ({ onDataReady }) => {
             />
             <div className="mb-3">
               <div className="text-xs text-gray-600 mb-2">
-                Expected: {pendingFileData?.metadata?.bands} values
+                Expected: {pendingFileData?.metadata?.bands} values (optional)
               </div>
               <div className="flex items-center gap-4">
                 <label className="flex items-center gap-1 text-sm">
@@ -305,15 +317,16 @@ const FileUpload = ({ onDataReady }) => {
               <button
                 onClick={handleWavelengthSubmit}
                 className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm flex-1"
+                disabled={!wavelengthInputValue.trim()}
               >
-                Apply
+                Apply Wavelengths
               </button>
-              {/* <button
-                onClick={handleWavelengthCancel}
+              <button
+                onClick={handleSkipWavelengths}
                 className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded text-sm flex-1"
               >
-                Skip
-              </button> */}
+                Use Band Numbers
+              </button>
             </div>
           </div>
         </div>
