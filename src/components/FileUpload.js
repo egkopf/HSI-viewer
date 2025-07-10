@@ -150,16 +150,27 @@ const FileUpload = ({ onDataReady }) => {
 
   const processHDF5 = async (h5File) => {
     console.log(`Processing HDF5: ${h5File.name}`);
+    const processingStartTime = performance.now();
     
     // Parse HDF5 metadata
+    console.log('Parsing HDF5 metadata...');
+    const metadataStartTime = performance.now();
     const metadata = await parseHDF5(h5File);
+    const metadataTime = performance.now() - metadataStartTime;
+    console.log(`HDF5 metadata parsed: ${metadataTime.toFixed(1)}ms`);
     
     // Get default RGB bands
     const defaultBands = metadata.defaultBands;
     console.log('Loading RGB bands:', defaultBands);
 
     // Load RGB band data
+    const bandLoadStartTime = performance.now();
     const rgbData = await parseHDF5Bands(h5File, metadata, defaultBands);
+    const bandLoadTime = performance.now() - bandLoadStartTime;
+    console.log(`HDF5 bands loaded: ${bandLoadTime.toFixed(1)}ms`);
+    
+    const totalProcessingTime = performance.now() - processingStartTime;
+    console.log(`HDF5 processing complete: ${totalProcessingTime.toFixed(1)}ms total`);
 
     const fileData = {
       fileName: h5File.name,

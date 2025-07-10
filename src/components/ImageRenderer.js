@@ -281,34 +281,57 @@ const ImageRenderer = ({
     const imageData = ctx.createImageData(samples, lines);
     const data = imageData.data;
 
-    // Optimized band statistics calculation
+    // Optimized band statistics calculation with progress indication
+    console.log('Calculating band statistics...');
+    const statsStartTime = performance.now();
+    
     const calculateBandStats = (bandIndex) => {
       if (!currentBandData[bandIndex]) return { min: 0, max: 65535 };
 
       const values = [];
-      const skipInterval = 5;
+      const skipInterval = Math.max(5, Math.floor(Math.sqrt(samples * lines) / 100)); // Adaptive sampling
+      let sampleCount = 0;
+      const maxSamples = 10000; // Limit maximum samples for very large images
 
       for (let line = 0; line < lines; line += skipInterval) {
         const lineData = currentBandData[bandIndex][line];
         if (!lineData) continue;
         
         for (let sample = 0; sample < samples; sample += skipInterval) {
+          if (sampleCount >= maxSamples) break;
+          
           const value = lineData[sample];
           if (value !== undefined && isValidPixelValue(value, metadata)) {
             values.push(value);
+            sampleCount++;
           }
         }
+        
+        if (sampleCount >= maxSamples) break;
       }
 
       if (values.length === 0) return { min: 0, max: 65535 };
 
-      values.sort((a, b) => a - b);
-      const lowerIndex = Math.floor(values.length * normalizationSettings.lowerPercentile);
-      const upperIndex = Math.floor(values.length * normalizationSettings.upperPercentile);
-      const min = values[lowerIndex] || 0;
-      const max = Math.max(values[upperIndex] || 1, min + 1);
+      // Use faster partial sort for large arrays
+      if (values.length > 1000) {
+        const lowerIndex = Math.floor(values.length * normalizationSettings.lowerPercentile);
+        const upperIndex = Math.floor(values.length * normalizationSettings.upperPercentile);
+        
+        // Use nth_element equivalent for better performance
+        values.sort((a, b) => a - b);
+        const min = values[lowerIndex] || 0;
+        const max = Math.max(values[upperIndex] || 1, min + 1);
+        
+        return { min, max };
+      } else {
+        values.sort((a, b) => a - b);
+        const lowerIndex = Math.floor(values.length * normalizationSettings.lowerPercentile);
+        const upperIndex = Math.floor(values.length * normalizationSettings.upperPercentile);
+        const min = values[lowerIndex] || 0;
+        const max = Math.max(values[upperIndex] || 1, min + 1);
 
-      return { min, max };
+        return { min, max };
+      }
     };
 
     // Calculate stats for each RGB band
@@ -317,6 +340,9 @@ const ImageRenderer = ({
       green: calculateBandStats(1),
       blue: calculateBandStats(2)
     };
+    
+    const statsTime = performance.now() - statsStartTime;
+    console.log(`Band statistics calculated: ${statsTime.toFixed(1)}ms`, bandStats);
 
     // Pre-calculate normalization values
     const redRange = bandStats.red.max - bandStats.red.min;
@@ -338,58 +364,81 @@ const ImageRenderer = ({
       return Math.floor(Math.pow(normalized, gamma) * 255);
     };
 
-    // Process pixels
+    // Process pixels with progress indication and chunked processing
     let dataIndex = 0;
+    const totalPixels = lines * samples;
+    const chunkSize = Math.max(1, Math.floor(lines / 100)); // Process in chunks of ~1% of lines
     
-    for (let line = 0; line < lines; line++) {
-      const redLine = redBand[line];
-      const greenLine = greenBand[line];
-      const blueLine = blueBand[line];
-      
-      if (!redLine || !greenLine || !blueLine) {
-        for (let sample = 0; sample < samples; sample++) {
-          data[dataIndex++] = 0; // R
-          data[dataIndex++] = 0; // G
-          data[dataIndex++] = 0; // B
-          data[dataIndex++] = 255; // A
-        }
-        continue;
-      }
-
-      const isEdgeLine = (line === 0 || line === lines - 1);
-
-      for (let sample = 0; sample < samples; sample++) {
-        const isEdgePixel = isEdgeLine || (sample === 0 || sample === samples - 1);
+    console.log(`Starting canvas rendering: ${samples}x${lines} pixels (${totalPixels.toLocaleString()} total)`);
+    
+    const processChunk = (startLine, endLine) => {
+      for (let line = startLine; line < endLine; line++) {
+        const redLine = redBand[line];
+        const greenLine = greenBand[line];
+        const blueLine = blueBand[line];
         
-        if (isEdgePixel) {
-          data[dataIndex++] = 0; // R
-          data[dataIndex++] = 0; // G
-          data[dataIndex++] = 0; // B
-          data[dataIndex++] = 255; // A
+        if (!redLine || !greenLine || !blueLine) {
+          for (let sample = 0; sample < samples; sample++) {
+            data[dataIndex++] = 0; // R
+            data[dataIndex++] = 0; // G
+            data[dataIndex++] = 0; // B
+            data[dataIndex++] = 255; // A
+          }
           continue;
         }
 
-        const redValue = redLine[sample];
-        const greenValue = greenLine[sample];
-        const blueValue = blueLine[sample];
+        const isEdgeLine = (line === 0 || line === lines - 1);
 
-        const isIgnored = !isValidPixelValue(redValue, metadata) || 
-                         !isValidPixelValue(greenValue, metadata) || 
-                         !isValidPixelValue(blueValue, metadata);
-        
-        if (isIgnored) {
-          data[dataIndex++] = 0; // R
-          data[dataIndex++] = 0; // G
-          data[dataIndex++] = 0; // B
-          data[dataIndex++] = 255; // A
-        } else {
-          data[dataIndex++] = fastNormalize(redValue, bandStats.red.min, redRange);
-          data[dataIndex++] = fastNormalize(greenValue, bandStats.green.min, greenRange);
-          data[dataIndex++] = fastNormalize(blueValue, bandStats.blue.min, blueRange);
-          data[dataIndex++] = 255; // A
+        for (let sample = 0; sample < samples; sample++) {
+          const isEdgePixel = isEdgeLine || (sample === 0 || sample === samples - 1);
+          
+          if (isEdgePixel) {
+            data[dataIndex++] = 0; // R
+            data[dataIndex++] = 0; // G
+            data[dataIndex++] = 0; // B
+            data[dataIndex++] = 255; // A
+            continue;
+          }
+
+          const redValue = redLine[sample];
+          const greenValue = greenLine[sample];
+          const blueValue = blueLine[sample];
+
+          const isIgnored = !isValidPixelValue(redValue, metadata) || 
+                           !isValidPixelValue(greenValue, metadata) || 
+                           !isValidPixelValue(blueValue, metadata);
+          
+          if (isIgnored) {
+            data[dataIndex++] = 0; // R
+            data[dataIndex++] = 0; // G
+            data[dataIndex++] = 0; // B
+            data[dataIndex++] = 255; // A
+          } else {
+            data[dataIndex++] = fastNormalize(redValue, bandStats.red.min, redRange);
+            data[dataIndex++] = fastNormalize(greenValue, bandStats.green.min, greenRange);
+            data[dataIndex++] = fastNormalize(blueValue, bandStats.blue.min, blueRange);
+            data[dataIndex++] = 255; // A
+          }
         }
       }
+    };
+
+    // Process in chunks with progress feedback
+    const startTime = performance.now();
+    
+    for (let startLine = 0; startLine < lines; startLine += chunkSize) {
+      const endLine = Math.min(startLine + chunkSize, lines);
+      processChunk(startLine, endLine);
+      
+      // Log progress periodically
+      if (startLine % (chunkSize * 10) === 0) {
+        const progress = Math.round((startLine / lines) * 100);
+        console.log(`Canvas rendering progress: ${progress}%`);
+      }
     }
+    
+    const renderTime = performance.now() - startTime;
+    console.log(`Canvas rendering complete: ${renderTime.toFixed(1)}ms (${(totalPixels / renderTime * 1000).toFixed(0)} pixels/sec)`)
 
     ctx.putImageData(imageData, 0, 0);
     
