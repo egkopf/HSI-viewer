@@ -212,10 +212,10 @@ const ImageRenderer = ({
       console.log('Loading new bands:', newBandNumbers);
 
       let newBandData;
-      if (metadata.fileType === 'geotiff') {
+      if (fileType === 'geotiff') {
         console.log('Using GeoTIFF parser for band change');
         newBandData = await parseGeoTIFFBands(dataFile, metadata, newBandNumbers);
-      } else if (metadata.fileType === 'hdf5') {
+      } else if (fileType === 'hdf5') {
         console.log('Using HDF5 parser for band change');
         newBandData = await parseHDF5Bands(dataFile, metadata, newBandNumbers);
       } else {
@@ -440,9 +440,9 @@ const ImageRenderer = ({
       console.log(`Extracting spectrum for pixel (${x}, ${y})`);
       
       let pixelSpectrum;
-      if (metadata.fileType === 'geotiff') {
+      if (fileType === 'geotiff') {
         pixelSpectrum = await extractGeoTIFFPixelSpectrum(dataFile, metadata, x, y);
-      } else if (metadata.fileType === 'hdf5') {
+      } else if (fileType === 'hdf5') {
         pixelSpectrum = await extractHDF5PixelSpectrum(dataFile, metadata, x, y);
       } else {
         pixelSpectrum = await extractPixelSpectrum(dataFile, metadata, x, y);

@@ -70,7 +70,7 @@ export default function Home() {
         {/* Compact Header */}
         <div className="flex items-center justify-between mb-2">
           <h1 className="text-lg font-bold">Hyperspectral Data Viewer</h1>
-          <span className="text-xs text-gray-500">ENVI (.hdr + data) or GeoTIFF (.tif/.tiff)</span>
+          <span className="text-xs text-gray-500">ENVI (.hdr + data), GeoTIFF (.tif/.tiff), or HDF5 (.h5/.hdf5)</span>
         </div>
 
         {/* Compact File Upload Section */}
