@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { parseHDRFile, parseSpecificBands } from '../utils/parseHyperspectral';
 import { parseGeoTIFF, parseGeoTIFFBands } from '../utils/parseGeoTIFF';
+import { parseHDF5, parseHDF5Bands } from '../utils/parseHDF5';
 
 const FileUpload = ({ onDataReady }) => {
   const [processing, setProcessing] = useState(false);
@@ -13,15 +14,24 @@ const FileUpload = ({ onDataReady }) => {
     try {
       setProcessing(true);
 
-      // Check for GeoTIFF files first
+      // Check for file types in priority order
       const tiffFiles = [...files].filter(file => 
         file.name.toLowerCase().endsWith('.tif') || 
         file.name.toLowerCase().endsWith('.tiff'));
+      
+      const h5Files = [...files].filter(file => 
+        file.name.toLowerCase().endsWith('.h5') || 
+        file.name.toLowerCase().endsWith('.hdf5'));
 
       console.log('Files uploaded:', [...files].map(f => f.name));
       console.log('TIFF files found:', tiffFiles.map(f => f.name));
+      console.log('HDF5 files found:', h5Files.map(f => f.name));
 
-      if (tiffFiles.length > 0) {
+      if (h5Files.length > 0) {
+        // Process HDF5
+        console.log('Processing as HDF5');
+        await processHDF5(h5Files[0]);
+      } else if (tiffFiles.length > 0) {
         // Process GeoTIFF
         console.log('Processing as GeoTIFF');
         await processGeoTIFF(tiffFiles[0]);
@@ -138,6 +148,32 @@ const FileUpload = ({ onDataReady }) => {
     }
   };
 
+  const processHDF5 = async (h5File) => {
+    console.log(`Processing HDF5: ${h5File.name}`);
+    
+    // Parse HDF5 metadata
+    const metadata = await parseHDF5(h5File);
+    
+    // Get default RGB bands
+    const defaultBands = metadata.defaultBands;
+    console.log('Loading RGB bands:', defaultBands);
+
+    // Load RGB band data
+    const rgbData = await parseHDF5Bands(h5File, metadata, defaultBands);
+
+    const fileData = {
+      fileName: h5File.name,
+      dataFile: h5File,
+      metadata,
+      bandData: rgbData,
+      loadedBands: defaultBands,
+      fileType: 'hdf5'
+    };
+
+    // Check wavelengths and potentially show input dialog
+    checkWavelengthsAndProceed(fileData);
+  };
+
   const processGeoTIFF = async (tiffFile) => {
     console.log(`Processing GeoTIFF: ${tiffFile.name}`);
     
@@ -233,7 +269,7 @@ const FileUpload = ({ onDataReady }) => {
     <div className="relative">
       <input
         type="file"
-        accept="*"
+        accept=".h5,.hdf5,.tif,.tiff,.hdr,.bsq,.bil,.bip,*"
         multiple
         onChange={(e) => processFiles(e.target.files)}
         disabled={processing || showWavelengthInput}
@@ -248,7 +284,7 @@ const FileUpload = ({ onDataReady }) => {
             <span className="dot-2">.</span>
             <span className="dot-3">.</span>
           </div>
-          <style jsx>{`
+          <style>{`
             .dot-1 {
               animation: dot1 2s infinite;
             }

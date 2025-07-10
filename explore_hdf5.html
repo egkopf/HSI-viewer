@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HDF5 Structure Explorer</title>
+    <script src="https://cdn.jsdelivr.net/npm/h5wasm@latest/dist/esm/hdf5_hl.js" type="module"></script>
+</head>
+<body>
+    <h1>HDF5 Structure Explorer</h1>
+    <input type="file" id="fileInput" accept=".h5,.hdf5">
+    <div id="output"></div>
+
+    <script type="module">
+        import * as h5wasm from 'https://cdn.jsdelivr.net/npm/h5wasm@latest/dist/esm/hdf5_hl.js';
+        
+        await h5wasm.ready;
+        
+        function exploreGroup(group, path = '', level = 0) {
+            const indent = '  '.repeat(level);
+            let output = '';
+            
+            try {
+                const keys = group.keys();
+                output += `${indent}Group: ${path || '/'}\n`;
+                output += `${indent}Keys: [${keys.join(', ')}]\n`;
+                
+                for (const key of keys) {
+                    try {
+                        const item = group.get(key);
+                        const itemPath = path ? `${path}/${key}` : key;
+                        
+                        if (item.keys) {
+                            // It's a group
+                            output += exploreGroup(item, itemPath, level + 1);
+                        } else if (item.shape) {
+                            // It's a dataset
+                            output += `${indent}  Dataset: ${itemPath}\n`;
+                            output += `${indent}    Shape: [${item.shape.join(', ')}]\n`;
+                            output += `${indent}    Type: ${item.type}\n`;
+                            output += `${indent}    Size: ${item.size}\n`;
+                            
+                            // Show attributes if any
+                            if (item.attrs) {
+                                const attrKeys = Object.keys(item.attrs);
+                                if (attrKeys.length > 0) {
+                                    output += `${indent}    Attributes: ${attrKeys.join(', ')}\n`;
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        output += `${indent}  Error accessing ${key}: ${e.message}\n`;
+                    }
+                }
+            } catch (e) {
+                output += `${indent}Error exploring group ${path}: ${e.message}\n`;
+            }
+            
+            return output;
+        }
+        
+        document.getElementById('fileInput').addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            try {
+                const fileBuffer = await file.arrayBuffer();
+                const filename = `/tmp/${file.name}`;
+                h5wasm.FS.writeFile(filename, new Uint8Array(fileBuffer));
+                const f = new h5wasm.File(filename, 'r');
+                
+                const structure = exploreGroup(f);
+                document.getElementById('output').innerHTML = `<pre>${structure}</pre>`;
+                
+                f.close();
+                h5wasm.FS.unlink(filename);
+                
+            } catch (error) {
+                document.getElementById('output').innerHTML = `<div style="color: red;">Error: ${error.message}</div>`;
+            }
+        });
+    </script>
+</body>
+</html>

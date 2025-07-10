@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { parseSpecificBands, extractPixelSpectrum } from '../utils/parseHyperspectral';
 import { parseGeoTIFFBands, extractGeoTIFFPixelSpectrum } from '../utils/parseGeoTIFF';
+import { parseHDF5Bands, extractHDF5PixelSpectrum } from '../utils/parseHDF5';
 import { isValidPixelValue } from '../utils/dataValidation';
 import { useSharedSpectral } from '../utils/sharedSpectralContent';
 
@@ -214,6 +215,9 @@ const ImageRenderer = ({
       if (metadata.fileType === 'geotiff') {
         console.log('Using GeoTIFF parser for band change');
         newBandData = await parseGeoTIFFBands(dataFile, metadata, newBandNumbers);
+      } else if (metadata.fileType === 'hdf5') {
+        console.log('Using HDF5 parser for band change');
+        newBandData = await parseHDF5Bands(dataFile, metadata, newBandNumbers);
       } else {
         console.log('Using ENVI parser for band change');
         newBandData = await parseSpecificBands(dataFile, metadata, newBandNumbers);
@@ -438,6 +442,8 @@ const ImageRenderer = ({
       let pixelSpectrum;
       if (metadata.fileType === 'geotiff') {
         pixelSpectrum = await extractGeoTIFFPixelSpectrum(dataFile, metadata, x, y);
+      } else if (metadata.fileType === 'hdf5') {
+        pixelSpectrum = await extractHDF5PixelSpectrum(dataFile, metadata, x, y);
       } else {
         pixelSpectrum = await extractPixelSpectrum(dataFile, metadata, x, y);
       }
