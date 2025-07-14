@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { parseHDRFile, parseSpecificBands } from '../utils/parseHyperspectral';
 import { parseGeoTIFF, parseGeoTIFFBands } from '../utils/parseGeoTIFF';
 import { parseHDF5, parseHDF5Bands } from '../utils/parseHDF5';
+import StructuredFileUpload from './StructuredFileUpload';
 
 const FileUpload = ({ onDataReady }) => {
   const [processing, setProcessing] = useState(false);
@@ -9,6 +10,7 @@ const FileUpload = ({ onDataReady }) => {
   const [wavelengthInputValue, setWavelengthInputValue] = useState('');
   const [wavelengthUnit, setWavelengthUnit] = useState('nm');
   const [pendingFileData, setPendingFileData] = useState(null);
+  const [uploadMode, setUploadMode] = useState('standard'); // 'standard' or 'structured'
 
   const processFiles = async (files) => {
     try {
@@ -23,9 +25,28 @@ const FileUpload = ({ onDataReady }) => {
         file.name.toLowerCase().endsWith('.h5') || 
         file.name.toLowerCase().endsWith('.hdf5'));
 
+      const ncFiles = [...files].filter(file => 
+        file.name.toLowerCase().endsWith('.nc') || 
+        file.name.toLowerCase().endsWith('.netcdf'));
+
       console.log('Files uploaded:', [...files].map(f => f.name));
       console.log('TIFF files found:', tiffFiles.map(f => f.name));
       console.log('HDF5 files found:', h5Files.map(f => f.name));
+      console.log('NetCDF files found:', ncFiles.map(f => f.name));
+
+      // Check if we have structured files that might need special handling
+      if ((h5Files.length > 0 || ncFiles.length > 0) && uploadMode === 'standard') {
+        // Ask user if they want to use structured mode
+        const useStructured = window.confirm(
+          'This appears to be a structured file (HDF5/NetCDF). Would you like to use the structured file viewer to select specific datasets for wavelength and reflectance data?'
+        );
+        
+        if (useStructured) {
+          setUploadMode('structured');
+          setProcessing(false);
+          return;
+        }
+      }
 
       if (h5Files.length > 0) {
         // Process HDF5
@@ -276,18 +297,71 @@ const FileUpload = ({ onDataReady }) => {
     checkWavelengthsAndProceed(fileData);
   };
 
+  // Handler for structured file uploads
+  const handleStructuredFileProcessed = (processedData) => {
+    const { file, metadata, bandData, wavelengthData, reflectanceData } = processedData;
+    
+    // Create file data object compatible with existing pipeline
+    const fileData = {
+      fileName: file.name,
+      dataFile: file,
+      metadata,
+      bandData,
+      loadedBands: metadata.defaultBands,
+      wavelengthData,
+      reflectanceData,
+      fileType: file.name.toLowerCase().endsWith('.nc') ? 'netcdf' : 'hdf5',
+      isStructured: true
+    };
+
+    // For structured uploads, we already have the wavelength data
+    setProcessing(false);
+    onDataReady(fileData);
+  };
+
   return (
-    <div className="relative">
-      <input
-        type="file"
-        accept=".h5,.hdf5,.tif,.tiff,.hdr,.bsq,.bil,.bip,*"
-        multiple
-        onChange={(e) => processFiles(e.target.files)}
-        disabled={processing || showWavelengthInput}
-        className="w-full text-xs"
-      />
-      
-      {processing && (
+    <div className="space-y-4">
+      {/* Upload Mode Toggle */}
+      <div className="flex items-center gap-4 mb-4">
+        <span className="text-sm font-medium">Upload Mode:</span>
+        <label className="flex items-center gap-2">
+          <input
+            type="radio"
+            value="standard"
+            checked={uploadMode === 'standard'}
+            onChange={(e) => setUploadMode(e.target.value)}
+            disabled={processing || showWavelengthInput}
+          />
+          <span className="text-sm">Standard</span>
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="radio"
+            value="structured"
+            checked={uploadMode === 'structured'}
+            onChange={(e) => setUploadMode(e.target.value)}
+            disabled={processing || showWavelengthInput}
+          />
+          <span className="text-sm">Structured (NetCDF/HDF5)</span>
+        </label>
+      </div>
+
+      {uploadMode === 'standard' ? (
+        <div className="relative">
+          <input
+            type="file"
+            accept=".h5,.hdf5,.tif,.tiff,.hdr,.bsq,.bil,.bip,.nc,.netcdf,*"
+            multiple
+            onChange={(e) => processFiles(e.target.files)}
+            disabled={processing || showWavelengthInput}
+            className="w-full text-xs"
+          />
+        </div>
+      ) : (
+        <StructuredFileUpload onFileProcessed={handleStructuredFileProcessed} />
+      )}
+
+      {uploadMode === 'standard' && processing && (
         <div className="absolute inset-0 bg-blue-100 bg-opacity-90 flex items-center justify-center rounded">
           <div className="text-xs text-blue-800 font-medium">
             Loading data

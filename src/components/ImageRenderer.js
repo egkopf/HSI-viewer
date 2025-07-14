@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { parseSpecificBands, extractPixelSpectrum } from '../utils/parseHyperspectral';
 import { parseGeoTIFFBands, extractGeoTIFFPixelSpectrum } from '../utils/parseGeoTIFF';
 import { parseHDF5Bands, extractHDF5PixelSpectrum } from '../utils/parseHDF5';
+import { loadStructuredBands, extractStructuredPixelSpectrum } from '../utils/processStructuredData';
 import { isValidPixelValue } from '../utils/dataValidation';
 import { useSharedSpectral } from '../utils/sharedSpectralContent';
 
@@ -218,6 +219,9 @@ const ImageRenderer = ({
       } else if (fileType === 'hdf5') {
         console.log('Using HDF5 parser for band change');
         newBandData = await parseHDF5Bands(dataFile, metadata, newBandNumbers);
+      } else if (fileType === 'netcdf' || fileType === 'structured' || fileData.isStructured) {
+        console.log('Using structured data parser for band change');
+        newBandData = await loadStructuredBands(fileData.reflectanceData, metadata, newBandNumbers);
       } else {
         console.log('Using ENVI parser for band change');
         newBandData = await parseSpecificBands(dataFile, metadata, newBandNumbers);
@@ -493,6 +497,8 @@ const ImageRenderer = ({
         pixelSpectrum = await extractGeoTIFFPixelSpectrum(dataFile, metadata, x, y);
       } else if (fileType === 'hdf5') {
         pixelSpectrum = await extractHDF5PixelSpectrum(dataFile, metadata, x, y);
+      } else if (fileType === 'netcdf' || fileType === 'structured' || fileData.isStructured) {
+        pixelSpectrum = await extractStructuredPixelSpectrum(fileData.reflectanceData, metadata, fileData.wavelengthData, x, y);
       } else {
         pixelSpectrum = await extractPixelSpectrum(dataFile, metadata, x, y);
       }
