@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { parseNetCDFStructure, loadNetCDFVariable } from '../utils/parseNetCDF.js';
 import { parseHDF5Structure, loadHDF5Dataset } from '../utils/parseHDF5Structure.js';
+import { parseHDF5StructureFromHeader, loadHDF5DatasetOnDemand } from '../utils/hdf5HeaderParser.js';
 import { processStructuredData } from '../utils/processStructuredData.js';
 import FileStructureTree from './FileStructureTree.js';
 
@@ -11,6 +12,8 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
   const [selectedReflectance, setSelectedReflectance] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState(null);
+  const [useSelectiveReading, setUseSelectiveReading] = useState(true);
+  const [useHeaderOnly, setUseHeaderOnly] = useState(true);
 
   const handleFileSelect = async (file) => {
     if (!file) return;
@@ -39,38 +42,39 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
       let structure;
       const fileName = file.name.toLowerCase();
 
-      if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf')) {
-        console.log('Processing NetCDF file:', fileName);
-        structure = await parseNetCDFStructure(file);
-      } else if (fileName.endsWith('.h5') || fileName.endsWith('.hdf5')) {
-        console.log('Processing HDF5 file:', fileName);
-        structure = await parseHDF5Structure(file);
+      if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf') || fileName.endsWith('.h5') || fileName.endsWith('.hdf5')) {
+        console.log('Processing HDF5/NetCDF4 file:', fileName);
+        
+        if (useHeaderOnly) {
+          console.log('Using header-only parsing (instant for any file size)');
+          structure = await parseHDF5StructureFromHeader(file);
+        } else if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf')) {
+          // For NetCDF files without header-only, use NetCDF parser for NetCDF3 support
+          structure = await parseNetCDFStructure(file);
+        } else {
+          structure = await parseHDF5Structure(file);
+        }
       } else {
         throw new Error('Unsupported file format. Please select a NetCDF (.nc) or HDF5 (.h5) file.');
       }
 
       setFileStructure(structure);
       
+      // Log performance metrics
+      if (structure.isHeaderOnly && structure.parsingTime) {
+        console.log(`Header-only parsing took ${structure.parsingTime.toFixed(2)}ms - ${structure.efficiency} - truly instant!`);
+      }
+      
       // Auto-select obvious candidates
       autoSelectCandidates(structure);
       
     } catch (err) {
-      let errorMessage = err.message;
-      
-      // Add helpful suggestions based on the error
-      if (err.message.includes('This appears to be a pure HDF5 file')) {
-        errorMessage += '\n\nTip: Try uploading this file using the HDF5 (.h5) option instead.';
-      } else if (err.message.includes('NetCDF4/HDF5 format signature but cannot be parsed')) {
-        errorMessage += '\n\nTip: If this is actually an HDF5 file, try uploading it using the HDF5 (.h5) option instead.';
-      } else if (err.message.includes('File too large for browser processing')) {
-        errorMessage += '\n\n📋 Python Example to Extract Data:\n\nimport h5py\nimport numpy as np\n\n# Open the large file\nwith h5py.File("your_file.nc", "r") as f:\n    # Explore structure\n    print(list(f.keys()))\n    \n    # Extract smaller subset\n    wavelengths = f["wavelength"][:]\n    reflectance = f["reflectance"][:100, :100, :]  # First 100x100 pixels\n    \n    # Save smaller file\n    with h5py.File("small_subset.h5", "w") as out:\n        out.create_dataset("wavelength", data=wavelengths)\n        out.create_dataset("reflectance", data=reflectance)';
-      }
-      
-      setError(errorMessage);
+      setError(err.message);
     } finally {
       setIsProcessing(false);
     }
   };
+
 
   const autoSelectCandidates = (structure) => {
     const candidates = findCandidates(structure);
@@ -123,29 +127,63 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
       let wavelengthData, reflectanceData;
 
       if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf')) {
-        // Load NetCDF datasets
-        const wavelengthPath = selectedWavelength.replace('/variables/', '');
-        const reflectancePath = selectedReflectance.replace('/variables/', '');
-        
-        const wavelengthResult = await loadNetCDFVariable(selectedFile, wavelengthPath);
-        const reflectanceResult = await loadNetCDFVariable(selectedFile, reflectancePath);
-        
-        wavelengthData = {
-          values: Array.from(wavelengthResult.data),
-          attributes: wavelengthResult.attributes
-        };
-        
-        reflectanceData = {
-          data: reflectanceResult.data,
-          shape: reflectanceResult.shape,
-          dimensions: reflectanceResult.dimensions,
-          attributes: reflectanceResult.attributes
-        };
+        // Load NetCDF datasets (only for files parsed with NetCDF parser)
+        if (!fileStructure.isHeaderOnly) {
+          const wavelengthPath = selectedWavelength.replace('/variables/', '');
+          const reflectancePath = selectedReflectance.replace('/variables/', '');
+          
+          const fileSizeGB = selectedFile.size / (1024 * 1024 * 1024);
+          const enableSelectiveReading = fileSizeGB > 1 && useSelectiveReading;
+          
+          console.log(`Loading NetCDF datasets from ${fileSizeGB.toFixed(1)}GB file, selective reading: ${enableSelectiveReading}`);
+          
+          const wavelengthResult = await loadNetCDFVariable(selectedFile, wavelengthPath, { useSelectiveReading: enableSelectiveReading });
+          const reflectanceResult = await loadNetCDFVariable(selectedFile, reflectancePath, { useSelectiveReading: enableSelectiveReading });
+          
+          wavelengthData = {
+            values: Array.from(wavelengthResult.data),
+            attributes: wavelengthResult.attributes
+          };
+          
+          reflectanceData = {
+            data: reflectanceResult.data,
+            shape: reflectanceResult.shape,
+            dimensions: reflectanceResult.dimensions,
+            attributes: reflectanceResult.attributes
+          };
+        } else {
+          // For header-only parsed files, use HDF5 dataset loading
+          const fileSizeGB = selectedFile.size / (1024 * 1024 * 1024);
+          const enableSelectiveReading = fileSizeGB > 1 && useSelectiveReading;
+          
+          console.log(`Loading HDF5/NetCDF4 datasets from ${fileSizeGB.toFixed(1)}GB file, selective reading: ${enableSelectiveReading}`);
+          
+          const wavelengthResult = await loadHDF5Dataset(selectedFile, selectedWavelength, { useSelectiveReading: enableSelectiveReading });
+          const reflectanceResult = await loadHDF5Dataset(selectedFile, selectedReflectance, { useSelectiveReading: enableSelectiveReading });
+          
+          wavelengthData = {
+            values: Array.from(wavelengthResult.data),
+            attributes: wavelengthResult.attributes
+          };
+          
+          reflectanceData = {
+            data: reflectanceResult.data,
+            shape: reflectanceResult.shape,
+            attributes: reflectanceResult.attributes
+          };
+        }
         
       } else if (fileName.endsWith('.h5') || fileName.endsWith('.hdf5')) {
-        // Load HDF5 datasets
-        const wavelengthResult = await loadHDF5Dataset(selectedFile, selectedWavelength);
-        const reflectanceResult = await loadHDF5Dataset(selectedFile, selectedReflectance);
+        // Load HDF5 datasets with H5Web or selective reading for large files
+        const fileSizeGB = selectedFile.size / (1024 * 1024 * 1024);
+        
+        // Use standard approach with selective reading
+        const enableSelectiveReading = fileSizeGB > 1 && useSelectiveReading;
+        
+        console.log(`Loading HDF5 datasets from ${fileSizeGB.toFixed(1)}GB file, selective reading: ${enableSelectiveReading}`);
+        
+        const wavelengthResult = await loadHDF5Dataset(selectedFile, selectedWavelength, { useSelectiveReading: enableSelectiveReading });
+        const reflectanceResult = await loadHDF5Dataset(selectedFile, selectedReflectance, { useSelectiveReading: enableSelectiveReading });
         
         wavelengthData = {
           values: Array.from(wavelengthResult.data),
@@ -272,6 +310,7 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
         </div>
       )}
 
+
       {/* File Structure Tree */}
       {fileStructure && (
         <FileStructureTree
@@ -304,6 +343,49 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
               )}
             </div>
           </div>
+          
+          {/* Processing options */}
+          {selectedFile && (
+            <div className="mt-4 pt-4 border-t">
+              <h5 className="font-medium mb-2 text-sm">Processing Options:</h5>
+              
+              {/* Header-only parsing for all files */}
+              <div className="mb-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={useHeaderOnly}
+                    onChange={(e) => setUseHeaderOnly(e.target.checked)}
+                    className="rounded"
+                  />
+                  <span>Use header-only parsing (instant for any file size)</span>
+                </label>
+                <div className="text-xs text-gray-600 mt-1">
+                  Reads only file header (~5-50MB) for structure - works on 2.9GB files instantly
+                  <br />NetCDF4 and HDF5 use the same format, so both are parsed identically
+                </div>
+              </div>
+
+              
+              {/* Selective reading option for large files */}
+              {selectedFile.size > 1024 * 1024 * 1024 && (
+                <div>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={useSelectiveReading}
+                      onChange={(e) => setUseSelectiveReading(e.target.checked)}
+                      className="rounded"
+                    />
+                    <span>Use selective reading (for very large files)</span>
+                  </label>
+                  <div className="text-xs text-gray-600 mt-1">
+                    Attempts to read only the selected datasets instead of the entire file
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

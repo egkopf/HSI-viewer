@@ -454,7 +454,7 @@ function isReflectanceCandidate(variable) {
 }
 
 // Load data from a specific NetCDF variable
-export async function loadNetCDFVariable(file, variableName) {
+export async function loadNetCDFVariable(file, variableName, options = {}) {
   try {
     // Validate inputs
     if (!file || !variableName) {
@@ -500,7 +500,7 @@ export async function loadNetCDFVariable(file, variableName) {
     if (formatCheck.format === 'netcdf4') {
       console.log('Loading NetCDF4 variable using HDF5 loader');
       try {
-        const hdf5Data = await loadHDF5Dataset(file, variableName);
+        const hdf5Data = await loadHDF5Dataset(file, variableName, options);
         return {
           data: hdf5Data.data,
           variable: {

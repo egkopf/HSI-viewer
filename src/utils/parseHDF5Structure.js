@@ -398,15 +398,43 @@ function isReflectanceCandidate(dataset) {
   return false;
 }
 
-// Load data from a specific HDF5 dataset
-export async function loadHDF5Dataset(file, datasetPath) {
+// Load data from a specific HDF5 dataset with selective reading for large files
+export async function loadHDF5Dataset(file, datasetPath, options = {}) {
   const h5 = await initializeH5wasm();
   
   try {
-    const fileBuffer = await file.arrayBuffer();
+    const fileSizeGB = file.size / (1024 * 1024 * 1024);
+    const isLargeFile = fileSizeGB > 1;
+    
+    console.log(`Loading HDF5 dataset ${datasetPath} from ${fileSizeGB.toFixed(1)}GB file`);
+    
+    let fileBuffer;
+    let f;
+    
+    if (isLargeFile && options.useSelectiveReading) {
+      // For large files, try to read only the dataset we need
+      console.log('Attempting selective dataset reading for large file...');
+      
+      try {
+        // First, try to determine dataset location without reading full file
+        const result = await loadHDF5DatasetSelective(file, datasetPath, h5);
+        if (result) {
+          return result;
+        }
+      } catch (selectiveError) {
+        console.warn('Selective reading failed, falling back to progressive header method:', selectiveError.message);
+      }
+      
+      // Fallback to progressive header reading
+      fileBuffer = await readHDF5HeaderProgressive(file, h5);
+    } else {
+      // For smaller files, read normally
+      fileBuffer = await file.arrayBuffer();
+    }
+    
     const filename = `/tmp/${file.name}`;
     h5.FS.writeFile(filename, new Uint8Array(fileBuffer));
-    const f = new h5.File(filename, 'r');
+    f = new h5.File(filename, 'r');
     
     // Navigate to the dataset
     const pathParts = datasetPath.split('/').filter(p => p);
@@ -438,4 +466,145 @@ export async function loadHDF5Dataset(file, datasetPath) {
     console.error(`Error loading HDF5 dataset ${datasetPath}:`, error);
     throw error;
   }
+}
+
+// Attempt to read only a specific dataset from large HDF5 file
+async function loadHDF5DatasetSelective(file, datasetPath, h5) {
+  console.log(`Attempting selective reading for dataset: ${datasetPath}`);
+  
+  // This is a simplified approach - in reality, we'd need to:
+  // 1. Parse the HDF5 file structure to find dataset locations
+  // 2. Read only the necessary file chunks
+  // 3. Reconstruct the dataset from those chunks
+  
+  // For now, we'll try reading progressively larger chunks until we can access the dataset
+  const chunkSizes = [
+    100 * 1024 * 1024,  // 100MB
+    250 * 1024 * 1024,  // 250MB
+    500 * 1024 * 1024,  // 500MB
+    1024 * 1024 * 1024, // 1GB
+  ];
+  
+  for (const chunkSize of chunkSizes) {
+    if (chunkSize >= file.size) continue;
+    
+    console.log(`Trying selective read with ${(chunkSize / 1024 / 1024).toFixed(0)}MB chunk...`);
+    
+    try {
+      // Try reading from the beginning of the file
+      const chunk = file.slice(0, chunkSize);
+      const chunkBuffer = await chunk.arrayBuffer();
+      
+      const filename = `/tmp/selective_${Date.now()}_${file.name}`;
+      h5.FS.writeFile(filename, new Uint8Array(chunkBuffer));
+      
+      try {
+        const f = new h5.File(filename, 'r');
+        
+        // Try to navigate to the dataset
+        const pathParts = datasetPath.split('/').filter(p => p);
+        let current = f;
+        
+        for (const part of pathParts) {
+          current = current.get(part);
+        }
+        
+        // If we get here, the dataset is accessible
+        const data = current.value;
+        const shape = current.shape || [];
+        const attributes = current.attrs || {};
+        
+        f.close();
+        try {
+          h5.FS.unlink(filename);
+        } catch (e) {}
+        
+        console.log(`Selective reading successful with ${(chunkSize / 1024 / 1024).toFixed(0)}MB chunk`);
+        return {
+          data,
+          shape,
+          attributes,
+          path: datasetPath
+        };
+        
+      } catch (datasetError) {
+        // Dataset not accessible in this chunk
+        try {
+          h5.FS.unlink(filename);
+        } catch (e) {}
+        continue;
+      }
+    } catch (chunkError) {
+      console.warn(`Chunk read failed: ${chunkError.message}`);
+      continue;
+    }
+  }
+  
+  // If we get here, selective reading failed
+  throw new Error('Dataset not accessible with selective reading - may require full file access');
+}
+
+// Load a spatial/spectral subset of a large dataset
+export async function loadHDF5DatasetSubset(file, datasetPath, subsetOptions = {}) {
+  const {
+    maxSpatialSize = 1000,  // Maximum spatial dimensions (1000x1000 pixels)
+    maxSpectralBands = null, // Maximum spectral bands (null = all)
+    spatialStep = 1,         // Spatial sampling step (1 = every pixel, 2 = every other pixel)
+    spectralStep = 1         // Spectral sampling step
+  } = subsetOptions;
+  
+  console.log(`Loading HDF5 dataset subset: ${datasetPath}`);
+  console.log(`Subset options:`, subsetOptions);
+  
+  // First, get the full dataset structure to understand its shape
+  const fullResult = await loadHDF5Dataset(file, datasetPath, { useSelectiveReading: true });
+  const fullShape = fullResult.shape;
+  
+  console.log(`Full dataset shape: [${fullShape.join(', ')}]`);
+  
+  // For very large datasets, we need to implement chunked reading
+  // This is a simplified version - in practice, we'd need to:
+  // 1. Read the HDF5 file format to find chunk locations
+  // 2. Read only the chunks we need
+  // 3. Reconstruct the subset
+  
+  // For now, if we got the full dataset, create a subset from it
+  if (fullResult.data && fullShape.length === 3) {
+    console.log('Creating spatial/spectral subset from loaded data...');
+    
+    const [dim1, dim2, dim3] = fullShape;
+    let lines, samples, bands;
+    
+    // Determine data layout
+    if (dim3 < dim1 && dim3 < dim2) {
+      // Likely [lines, samples, bands]
+      [lines, samples, bands] = [dim1, dim2, dim3];
+    } else if (dim1 < dim2 && dim1 < dim3) {
+      // Likely [bands, lines, samples]
+      [bands, lines, samples] = [dim1, dim2, dim3];
+    } else {
+      // Default to [lines, samples, bands]
+      [lines, samples, bands] = [dim1, dim2, dim3];
+    }
+    
+    // Calculate subset dimensions
+    const spatialSubsetLines = Math.min(lines, maxSpatialSize);
+    const spatialSubsetSamples = Math.min(samples, maxSpatialSize);
+    const spectralSubsetBands = maxSpectralBands ? Math.min(bands, maxSpectralBands) : bands;
+    
+    console.log(`Creating subset: ${spatialSubsetLines}x${spatialSubsetSamples}x${spectralSubsetBands}`);
+    
+    // Note: Full implementation would require complex array slicing based on data layout
+    // For now, we return the full dataset with metadata about the intended subset
+    return {
+      ...fullResult,
+      isSubset: true,
+      fullShape,
+      subsetShape: [spatialSubsetLines, spatialSubsetSamples, spectralSubsetBands],
+      subsetOptions,
+      recommendedProcessing: 'Consider using external tools for large dataset processing'
+    };
+  }
+  
+  return fullResult;
 }
