@@ -112,18 +112,21 @@ async function extractHDF5Metadata(file) {
     
     // If no common path found, look for largest 3D dataset
     if (!mainDataset) {
+      console.log('No common dataset path found, searching root keys:', rootKeys);
       for (const key of rootKeys) {
         try {
           const item = file.get(key);
+          console.log(`Checking root key '${key}':`, { hasShape: !!item.shape, shape: item.shape, size: item.size });
           if (item.shape && item.shape.length === 3) {
             // Check if this is larger than current candidate
             if (!mainDataset || item.size > mainDataset.size) {
               mainDataset = item;
               datasetPath = `/${key}`;
+              console.log(`Selected dataset '${key}' with path: ${datasetPath}`);
             }
           }
         } catch (e) {
-          // Skip items that can't be accessed
+          console.log(`Failed to access root key '${key}':`, e.message);
         }
       }
     }
@@ -131,6 +134,10 @@ async function extractHDF5Metadata(file) {
     if (!mainDataset) {
       throw new Error('No suitable hyperspectral dataset found in HDF5 file');
     }
+    
+    // Debug: Log the final dataset path
+    console.log('Final dataset path selected:', datasetPath);
+    console.log('Main dataset shape:', mainDataset.shape);
     
     // Extract dimensions from dataset shape
     const shape = mainDataset.shape;
@@ -238,9 +245,14 @@ async function extractHDF5Metadata(file) {
     metadata.headerOffset = 0;
     metadata.datasetPath = datasetPath;
     metadata.shape = shape;
+    
+    // Debug: Log metadata construction
+    console.log('Metadata constructed with datasetPath:', metadata.datasetPath);
+    console.log('Metadata shape:', metadata.shape);
     metadata.wavelengthValues = wavelengthValues;
     metadata.wavelengthUnits = units;
     metadata.dataIgnoreValue = dataIgnoreValue;
+    metadata["data ignore value"] = dataIgnoreValue; // For compatibility with ENVI parser
     metadata.reflectanceScaleFactor = reflectanceScaleFactor;
     
     // Select default RGB bands
@@ -274,6 +286,11 @@ export async function parseHDF5Bands(file, metadata, bandNumbers) {
     // Get the main dataset
     const dataset = f.get(metadata.datasetPath);
     
+    // Debug: Log metadata structure
+    console.log('parseHDF5Bands called with metadata:', metadata);
+    console.log('Metadata shape:', metadata.shape);
+    console.log('Metadata dimensions:', { samples: metadata.samples, lines: metadata.lines, bands: metadata.bands });
+    
     // Validate band numbers
     const validBandNumbers = bandNumbers.map(band =>
       Math.max(1, Math.min(metadata.bands, Math.floor(band) || 1))
@@ -298,17 +315,33 @@ export async function parseHDF5Bands(file, metadata, bandNumbers) {
 }
 
 // Read band data from HDF5 dataset with selective band loading
-// Optimized for BSQ format to match ENVI performance by:
-// 1. Reading only requested bands instead of full dataset
-// 2. Using parallel band loading with Promise.all()
-// 3. Leveraging HDF5 slicing when available for memory efficiency
+// Optimized to match ENVI streaming performance by:
+// 1. Using h5wasm dataset slicing for memory efficiency
+// 2. Reading only requested bands instead of full dataset
+// 3. Using parallel band loading with Promise.all()
+// 4. Avoiding full dataset loading for large files
 async function readHDF5Bands(dataset, metadata, bandNumbers) {
   const { samples, lines, bands, shape } = metadata;
   const bandData = new Array(bandNumbers.length);
   
+  // Validate metadata structure and reconstruct shape if missing
+  let reconstructedShape = shape;
+  
+  if (!samples || !lines || !bands) {
+    console.error('Invalid metadata structure - missing dimensions:', { samples, lines, bands });
+    throw new Error('Invalid metadata: missing samples, lines, or bands dimensions');
+  }
+  
+  if (!reconstructedShape || !Array.isArray(reconstructedShape) || reconstructedShape.length < 3) {
+    console.warn('Shape missing from metadata, reconstructing from dimensions');
+    // For HDF5 hyperspectral data, the typical format is [bands, lines, samples] (BSQ)
+    reconstructedShape = [bands, lines, samples];
+    console.log('Reconstructed shape:', reconstructedShape);
+  }
+  
   try {
     // Determine data layout
-    const isSpectralFirst = shape[0] === bands;
+    const isSpectralFirst = reconstructedShape[0] === bands;
     
     // Pre-allocate output arrays
     for (let i = 0; i < bandNumbers.length; i++) {
@@ -320,47 +353,34 @@ async function readHDF5Bands(dataset, metadata, bandNumbers) {
     
     if (isSpectralFirst) {
       // [bands, lines, samples] format - BSQ layout
-      // Load bands in parallel like ENVI implementation
+      // Use HDF5 slicing for efficient band reading (similar to ENVI BSQ approach)
+      console.log(`Reading ${bandNumbers.length} bands in BSQ format using HDF5 slicing`);
+      
       const readPromises = bandNumbers.map(async (bandNumber, i) => {
         const bandIndex = bandNumber - 1; // Convert to 0-based
         
         try {
-          // For BSQ format, read only the specific band slice
-          // h5wasm allows selective reading via slice notation
-          let bandSlice;
+          // Use HDF5 slicing to read only the specific band
+          // This is memory efficient and doesn't require loading the full dataset
+          const bandSlice = dataset.slice([bandIndex, 0, 0], [1, lines, samples]);
           
-          try {
-            // Try to use HDF5 slicing if available (more memory efficient)
-            bandSlice = dataset.slice([bandIndex, 0, 0], [1, lines, samples]);
-            // Flatten the result since we only want one band
-            bandSlice = bandSlice.flat();
-          } catch (sliceError) {
-            // Fallback to reading full dataset and slicing
-            const fullData = dataset.value;
-            const bandStart = bandIndex * lines * samples;
-            const bandEnd = bandStart + lines * samples;
-            bandSlice = fullData.slice(bandStart, bandEnd);
-          }
-          
-          // Process band data line by line using subarray views for efficiency
+          // Process the band slice data line by line
           for (let line = 0; line < lines; line++) {
-            const lineStart = line * samples;
-            const lineEnd = lineStart + samples;
-            const lineData = bandSlice.subarray ? 
-              bandSlice.subarray(lineStart, lineEnd) : 
-              bandSlice.slice(lineStart, lineEnd);
-            
-            // Validate and copy line data efficiently
             for (let sample = 0; sample < samples; sample++) {
-              let value = lineData[sample];
+              // For BSQ format with shape [1, lines, samples], index is [0, line, sample]
+              let value = bandSlice[line * samples + sample];
+              
+              // Validate and filter pixel values
               if (!isValidPixelValue(value, metadata)) {
                 value = 0;
               }
+              
               bandData[i][line][sample] = value;
             }
           }
+          
         } catch (error) {
-          console.error(`Error reading band ${bandNumber}:`, error);
+          console.error(`Error reading band ${bandNumber} with slicing:`, error);
           // Fill with zeros on error
           for (let line = 0; line < lines; line++) {
             bandData[i][line].fill(0);
@@ -373,25 +393,45 @@ async function readHDF5Bands(dataset, metadata, bandNumbers) {
       
     } else {
       // [lines, samples, bands] format - BIP/BIL layout
-      // For non-BSQ layouts, we need to read more of the dataset
-      // This is less efficient but necessary for the data layout
-      const fullData = dataset.value;
+      // For non-BSQ layouts, we need to read line by line to avoid full dataset loading
+      console.log(`Reading ${bandNumbers.length} bands in BIP/BIL format using line-by-line slicing`);
       
-      for (let i = 0; i < bandNumbers.length; i++) {
-        const bandIndex = bandNumbers[i] - 1; // Convert to 0-based
-        
-        for (let line = 0; line < lines; line++) {
+      const bandIndices = bandNumbers.map(b => b - 1);
+      
+      // Process one line at a time to avoid memory issues
+      for (let line = 0; line < lines; line++) {
+        try {
+          // Read entire line: [line, 0, 0] to [line+1, samples, bands]
+          const lineSlice = dataset.slice([line, 0, 0], [1, samples, bands]);
+          
+          // Extract requested bands from this line
           for (let sample = 0; sample < samples; sample++) {
-            // [lines, samples, bands] format
-            const value = fullData[line * samples * bands + sample * bands + bandIndex];
-            
-            // Validate pixel value
-            if (!isValidPixelValue(value, metadata)) {
-              bandData[i][line][sample] = 0;
-            } else {
+            for (let i = 0; i < bandNumbers.length; i++) {
+              const bandIndex = bandIndices[i];
+              
+              // For BIP format: [line, sample, band]
+              let value = lineSlice[sample * bands + bandIndex];
+              
+              // Validate pixel value
+              if (!isValidPixelValue(value, metadata)) {
+                value = 0;
+              }
+              
               bandData[i][line][sample] = value;
             }
           }
+          
+        } catch (error) {
+          console.error(`Error reading line ${line}:`, error);
+          // Fill line with zeros on error
+          for (let i = 0; i < bandNumbers.length; i++) {
+            bandData[i][line].fill(0);
+          }
+        }
+        
+        // Yield to browser every 100 lines to prevent blocking
+        if (line % 100 === 0 && line > 0) {
+          await new Promise(resolve => setTimeout(resolve, 0));
         }
       }
     }
@@ -409,6 +449,11 @@ export async function extractHDF5PixelSpectrum(file, metadata, x, y) {
   const h5 = await initializeH5wasm();
   
   try {
+    // Debug: Log metadata structure
+    console.log('extractHDF5PixelSpectrum called with metadata:', metadata);
+    console.log('Metadata shape:', metadata.shape);
+    console.log('Metadata dimensions:', { samples: metadata.samples, lines: metadata.lines, bands: metadata.bands });
+    
     // Bounds check
     if (x < 0 || x >= metadata.samples || y < 0 || y >= metadata.lines) {
       throw new Error(`Pixel coordinates (${x}, ${y}) out of bounds`);
@@ -422,8 +467,36 @@ export async function extractHDF5PixelSpectrum(file, metadata, x, y) {
     h5.FS.writeFile(filename, new Uint8Array(fileBuffer));
     const f = new h5.File(filename, 'r');
     
+    // Validate dataset path
+    if (!metadata.datasetPath) {
+      throw new Error('Dataset path is undefined in metadata - file may not have been parsed correctly');
+    }
+    
     // Get the main dataset
     const dataset = f.get(metadata.datasetPath);
+    
+    // Validate dataset
+    if (!dataset) {
+      throw new Error(`Dataset not found at path: ${metadata.datasetPath}`);
+    }
+    
+    console.log('Dataset loaded:', dataset);
+    console.log('Dataset shape:', dataset.shape);
+    console.log('Dataset dtype:', dataset.dtype);
+    console.log('Dataset value available:', dataset.value !== null);
+    
+    // For large datasets, we might need to force loading or use a different approach
+    if (!dataset.value) {
+      console.warn('Dataset value is null, trying to force load dataset...');
+      try {
+        // Try to access the dataset to trigger loading
+        const testSlice = dataset.slice([0, 0, 0], [1, 1, 1]);
+        console.log('Dataset slice test successful:', testSlice);
+      } catch (sliceError) {
+        console.error('Dataset slice test failed:', sliceError);
+        throw new Error('Dataset cannot be accessed - may be too large or corrupted');
+      }
+    }
     
     // Read pixel spectrum
     const spectrum = await readHDF5PixelSpectrum(dataset, metadata, x, y);
@@ -443,88 +516,165 @@ export async function extractHDF5PixelSpectrum(file, metadata, x, y) {
   }
 }
 
-// Read spectral profile for a single pixel with optimized data access
+// Read spectral profile for a single pixel using targeted HDF5 slicing
+// Optimized to match ENVI targeted reading approach:
+// 1. Uses minimal slicing to read only the required pixel data
+// 2. Avoids loading entire dataset into memory
+// 3. Handles both BSQ and BIP/BIL layouts efficiently
 async function readHDF5PixelSpectrum(dataset, metadata, x, y) {
   const { samples, lines, bands, shape, wavelengthValues } = metadata;
   const spectrum = [];
   
+  // Validate metadata structure and reconstruct shape if missing
+  let reconstructedShape = shape;
+  
+  if (!samples || !lines || !bands) {
+    console.error('Invalid metadata structure in readHDF5PixelSpectrum - missing dimensions:', { samples, lines, bands });
+    throw new Error('Invalid metadata: missing samples, lines, or bands dimensions');
+  }
+  
+  if (!reconstructedShape || !Array.isArray(reconstructedShape) || reconstructedShape.length < 3) {
+    console.warn('Shape missing from metadata, reconstructing from dimensions');
+    // For HDF5 hyperspectral data, the typical format is [bands, lines, samples] (BSQ)
+    reconstructedShape = [bands, lines, samples];
+    console.log('Reconstructed shape:', reconstructedShape);
+  }
+  
   try {
     // Determine data layout
-    const isSpectralFirst = shape[0] === bands;
+    const isSpectralFirst = reconstructedShape[0] === bands;
     
     if (isSpectralFirst) {
       // [bands, lines, samples] format - BSQ layout
-      // Try to read only the required pixel column across all bands
-      let pixelData;
+      // Use efficient single-pixel slice across all bands (similar to ENVI BIP pixel read)
+      console.log(`Reading pixel spectrum for BSQ layout at (${x}, ${y})`);
       
       try {
-        // Try to use HDF5 slicing to read just the pixel column
-        pixelData = dataset.slice([0, y, x], [bands, 1, 1]);
-        // Flatten to get 1D array of band values
-        pixelData = pixelData.flat();
-      } catch (sliceError) {
-        // Fallback to full dataset read if slicing not available
-        const fullData = dataset.value;
-        pixelData = new Array(bands);
+        // Try to read the pixel column across all bands in one operation
+        // This reads: [0:bands, y:y+1, x:x+1] = [bands, 1, 1]
+        const pixelColumn = dataset.slice([0, y, x], [bands, 1, 1]);
         
+        // Extract spectrum from the pixel column
         for (let band = 0; band < bands; band++) {
-          pixelData[band] = fullData[band * lines * samples + y * samples + x];
+          let value = pixelColumn[band];
+          
+          // Validate pixel value
+          if (!isValidPixelValue(value, metadata)) {
+            value = 0;
+          }
+          
+          const wavelength = wavelengthValues ? wavelengthValues[band] : band + 1;
+          
+          spectrum.push({
+            band: band + 1,
+            wavelength,
+            value
+          });
         }
-      }
-      
-      // Build spectrum from pixel data
-      for (let band = 0; band < bands; band++) {
-        let value = pixelData[band];
         
-        // Validate pixel value
-        if (!isValidPixelValue(value, metadata)) {
-          value = 0;
+      } catch (sliceError) {
+        console.warn('BSQ pixel column slice failed, falling back to line read:', sliceError.message);
+        
+        // Fallback: read the entire line for the pixel Y coordinate across all bands
+        try {
+          const lineSlice = dataset.slice([0, y, 0], [bands, 1, samples]);
+          
+          // Extract the specific pixel from each band's line
+          for (let band = 0; band < bands; band++) {
+            let value = lineSlice[band * samples + x];
+            
+            // Validate pixel value
+            if (!isValidPixelValue(value, metadata)) {
+              value = 0;
+            }
+            
+            const wavelength = wavelengthValues ? wavelengthValues[band] : band + 1;
+            
+            spectrum.push({
+              band: band + 1,
+              wavelength,
+              value
+            });
+          }
+          
+        } catch (lineError) {
+          console.error('BSQ line read also failed:', lineError.message);
+          // Return zero spectrum as final fallback
+          for (let band = 0; band < bands; band++) {
+            const wavelength = wavelengthValues ? wavelengthValues[band] : band + 1;
+            spectrum.push({
+              band: band + 1,
+              wavelength,
+              value: 0
+            });
+          }
         }
-        
-        const wavelength = wavelengthValues ? wavelengthValues[band] : band + 1;
-        
-        spectrum.push({
-          band: band + 1,
-          wavelength,
-          value
-        });
       }
       
     } else {
       // [lines, samples, bands] format - BIP/BIL layout
-      // For non-BSQ layouts, we need to read the specific line or full dataset
-      let pixelData;
+      // Use targeted pixel read (similar to ENVI BIP approach)
+      console.log(`Reading pixel spectrum for BIP/BIL layout at (${x}, ${y})`);
       
       try {
-        // Try to read just the required pixel
-        pixelData = dataset.slice([y, x, 0], [1, 1, bands]);
-        pixelData = pixelData.flat();
-      } catch (sliceError) {
-        // Fallback to full dataset read
-        const fullData = dataset.value;
-        pixelData = new Array(bands);
+        // Read the specific pixel across all bands: [y:y+1, x:x+1, 0:bands]
+        const pixelSlice = dataset.slice([y, x, 0], [1, 1, bands]);
         
+        // Extract spectrum from pixel data
         for (let band = 0; band < bands; band++) {
-          pixelData[band] = fullData[y * samples * bands + x * bands + band];
+          let value = pixelSlice[band];
+          
+          // Validate pixel value
+          if (!isValidPixelValue(value, metadata)) {
+            value = 0;
+          }
+          
+          const wavelength = wavelengthValues ? wavelengthValues[band] : band + 1;
+          
+          spectrum.push({
+            band: band + 1,
+            wavelength,
+            value
+          });
         }
-      }
-      
-      // Build spectrum from pixel data
-      for (let band = 0; band < bands; band++) {
-        let value = pixelData[band];
         
-        // Validate pixel value
-        if (!isValidPixelValue(value, metadata)) {
-          value = 0;
+      } catch (sliceError) {
+        console.warn('BIP/BIL pixel slice failed, falling back to line read:', sliceError.message);
+        
+        // Fallback: read entire line and extract the pixel
+        try {
+          const lineSlice = dataset.slice([y, 0, 0], [1, samples, bands]);
+          
+          // Extract the specific pixel from the line
+          for (let band = 0; band < bands; band++) {
+            let value = lineSlice[x * bands + band];
+            
+            // Validate pixel value
+            if (!isValidPixelValue(value, metadata)) {
+              value = 0;
+            }
+            
+            const wavelength = wavelengthValues ? wavelengthValues[band] : band + 1;
+            
+            spectrum.push({
+              band: band + 1,
+              wavelength,
+              value
+            });
+          }
+          
+        } catch (lineError) {
+          console.error('BIP/BIL line read also failed:', lineError.message);
+          // Return zero spectrum as final fallback
+          for (let band = 0; band < bands; band++) {
+            const wavelength = wavelengthValues ? wavelengthValues[band] : band + 1;
+            spectrum.push({
+              band: band + 1,
+              wavelength,
+              value: 0
+            });
+          }
         }
-        
-        const wavelength = wavelengthValues ? wavelengthValues[band] : band + 1;
-        
-        spectrum.push({
-          band: band + 1,
-          wavelength,
-          value
-        });
       }
     }
     

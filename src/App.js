@@ -12,6 +12,9 @@ export default function Home() {
   const [dataFile1, setDataFile1] = useState(null);
   const [fileName1, setFileName1] = useState(null);
   const [fileType1, setFileType1] = useState(null);
+  const [wavelengthData1, setWavelengthData1] = useState(null);
+  const [reflectanceData1, setReflectanceData1] = useState(null);
+  const [isStructured1, setIsStructured1] = useState(false);
 
   // Secondary file state
   const [metadata2, setMetadata2] = useState(null);
@@ -20,10 +23,14 @@ export default function Home() {
   const [dataFile2, setDataFile2] = useState(null);
   const [fileName2, setFileName2] = useState(null);
   const [fileType2, setFileType2] = useState(null);
+  const [wavelengthData2, setWavelengthData2] = useState(null);
+  const [reflectanceData2, setReflectanceData2] = useState(null);
+  const [isStructured2, setIsStructured2] = useState(false);
 
   const handleDataReady = (fileData, slot = 1) => {
-    const { fileName, dataFile, metadata, bandData, loadedBands, fileType } = fileData;
+    const { fileName, dataFile, metadata, bandData, loadedBands, fileType, wavelengthData, reflectanceData, isStructured } = fileData;
     console.log(`Data ready for slot ${slot}:`, fileName);
+    console.log('Structured data fields:', { wavelengthData: !!wavelengthData, reflectanceData: !!reflectanceData, isStructured });
     
     if (slot === 1) {
       setMetadata1(metadata);
@@ -32,6 +39,9 @@ export default function Home() {
       setDataFile1(dataFile);
       setFileName1(fileName);
       setFileType1(fileType);
+      setWavelengthData1(wavelengthData || null);
+      setReflectanceData1(reflectanceData || null);
+      setIsStructured1(isStructured || false);
     } else {
       setMetadata2(metadata);
       setBandData2(bandData);
@@ -39,6 +49,9 @@ export default function Home() {
       setDataFile2(dataFile);
       setFileName2(fileName);
       setFileType2(fileType);
+      setWavelengthData2(wavelengthData || null);
+      setReflectanceData2(reflectanceData || null);
+      setIsStructured2(isStructured || false);
     }
   };
 
@@ -50,6 +63,9 @@ export default function Home() {
       setDataFile1(null);
       setFileName1(null);
       setFileType1(null);
+      setWavelengthData1(null);
+      setReflectanceData1(null);
+      setIsStructured1(false);
     } else {
       setMetadata2(null);
       setBandData2(null);
@@ -57,6 +73,9 @@ export default function Home() {
       setDataFile2(null);
       setFileName2(null);
       setFileType2(null);
+      setWavelengthData2(null);
+      setReflectanceData2(null);
+      setIsStructured2(false);
     }
   };
 
@@ -124,6 +143,9 @@ export default function Home() {
                     loadedBands={loadedBands1}
                     dataFile={dataFile1}
                     fileType={fileType1}
+                    wavelengthData={wavelengthData1}
+                    reflectanceData={reflectanceData1}
+                    isStructured={isStructured1}
                     enableSharedSpectral={true}
                     isMainSpectralDisplay={true}
                   />
@@ -138,6 +160,9 @@ export default function Home() {
                     loadedBands={loadedBands2}
                     dataFile={dataFile2}
                     fileType={fileType2}
+                    wavelengthData={wavelengthData2}
+                    reflectanceData={reflectanceData2}
+                    isStructured={isStructured2}
                     enableSharedSpectral={true}
                     isMainSpectralDisplay={false}
                   />
@@ -155,6 +180,9 @@ export default function Home() {
                   loadedBands={loadedBands1}
                   dataFile={dataFile1}
                   fileType={fileType1}
+                  wavelengthData={wavelengthData1}
+                  reflectanceData={reflectanceData1}
+                  isStructured={isStructured1}
                   enableSharedSpectral={false}
                   isMainSpectralDisplay={true}
                 />
@@ -171,6 +199,9 @@ export default function Home() {
                   loadedBands={loadedBands2}
                   dataFile={dataFile2}
                   fileType={fileType2}
+                  wavelengthData={wavelengthData2}
+                  reflectanceData={reflectanceData2}
+                  isStructured={isStructured2}
                   enableSharedSpectral={false}
                   isMainSpectralDisplay={true}
                 />

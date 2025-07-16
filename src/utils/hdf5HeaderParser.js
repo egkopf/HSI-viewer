@@ -41,7 +41,7 @@ export async function parseHDF5StructureFromHeader(file) {
     }
     
     // Parse the structure from header
-    const structure = await parseHDF5HeaderStructure(headerView, file.name);
+    const structure = await parseHDF5HeaderStructure(headerView, file.name, file);
     
     const endTime = performance.now();
     const parsingTime = endTime - startTime;
@@ -78,7 +78,7 @@ function verifyHDF5Signature(dataView) {
 }
 
 // Parse HDF5 structure from header data
-async function parseHDF5HeaderStructure(dataView, filename) {
+async function parseHDF5HeaderStructure(dataView, filename, file) {
   // Instead of creating mock data, let's try to read what's actually in the header
   // If that fails, we'll fall back to a more comprehensive approach
   
@@ -86,31 +86,92 @@ async function parseHDF5HeaderStructure(dataView, filename) {
     children: []
   };
   
-  // First, let's try to use h5wasm to parse just the header portion
+  // Skip h5wasm header parsing since it doesn't work well with partial files
+  // Instead, go straight to full file parsing when header parsing is needed
+  console.log('Skipping h5wasm header parsing - will use full file parsing if needed');
+  
+  // If h5wasm parsing failed, try manual HDF5 header parsing
   try {
-    const headerArray = new Uint8Array(dataView.buffer);
+    const manualStructure = await parseHDF5SuperblockAndStructure(dataView);
+    if (manualStructure && manualStructure.children.length > 0) {
+      return manualStructure;
+    }
+  } catch (error) {
+    console.warn('Manual HDF5 header parsing failed:', error.message);
+  }
+  
+  // If header parsing fails, try full file parsing with h5wasm
+  console.warn('Header-only parsing failed - falling back to full file parsing');
+  try {
+    const fullFileStructure = await parseHDF5StructureFromFullFile(file);
+    if (fullFileStructure && fullFileStructure.children && fullFileStructure.children.length > 0) {
+      return fullFileStructure;
+    }
+  } catch (fullFileError) {
+    console.error('Full file parsing also failed:', fullFileError.message);
+  }
+  
+  // If all parsing attempts fail, return empty structure with error
+  console.error('Both header-only and full file parsing failed');
+  throw new Error('Unable to parse HDF5 file structure - file may be corrupted or unsupported');
+  
+  return structure;
+}
+
+// Parse HDF5 structure from full file using h5wasm
+async function parseHDF5StructureFromFullFile(file) {
+  const fileType = file.name.toLowerCase().endsWith('.nc') || file.name.toLowerCase().endsWith('.netcdf') ? 'NetCDF4' : 'HDF5';
+  console.log(`Starting ${fileType} full file parsing for ${file.name} (${(file.size / 1024 / 1024).toFixed(1)}MB)`);
+  const startTime = performance.now();
+  
+  try {
+    // Read the entire file
+    console.log('Reading full file into memory...');
+    const fileBuffer = await file.arrayBuffer();
+    const fileArray = new Uint8Array(fileBuffer);
+    console.log(`File read successfully: ${fileArray.length} bytes`);
     
-    // Try to initialize h5wasm with just the header
+    // Try to initialize h5wasm with the full file
     const h5wasm = await import('h5wasm');
     await h5wasm.ready;
+    console.log('h5wasm loaded successfully');
     
-    // Create a temporary file from the header data
-    const tempFilename = `/tmp/header_${Date.now()}.h5`;
-    h5wasm.FS.writeFile(tempFilename, headerArray);
+    // Create a temporary file from the full file data
+    const tempFilename = `/tmp/fullfile_${Date.now()}.h5`;
+    h5wasm.FS.writeFile(tempFilename, fileArray);
+    console.log(`Created temporary file: ${tempFilename}`);
     
     try {
-      const headerFile = new h5wasm.File(tempFilename, 'r');
+      const fullFile = new h5wasm.File(tempFilename, 'r');
+      console.log('h5wasm File opened successfully');
       
-      // Extract actual structure from header
-      const realStructure = await extractRealHDF5Structure(headerFile);
-      headerFile.close();
+      // Extract actual structure from full file
+      const realStructure = await extractRealHDF5Structure(fullFile);
+      console.log('Structure extracted successfully:', realStructure);
+      
+      fullFile.close();
       
       // Clean up
       try {
         h5wasm.FS.unlink(tempFilename);
       } catch (e) {}
       
-      return realStructure;
+      const endTime = performance.now();
+      const parsingTime = endTime - startTime;
+      
+      console.log(`${fileType} full file parsing completed in ${parsingTime.toFixed(2)}ms`);
+      
+      return {
+        type: 'hdf5',
+        name: 'root',
+        path: '/',
+        children: realStructure.children,
+        format: `${fileType} (Full File)`,
+        isHeaderOnly: false,
+        parsingTime,
+        fileSize: file.size,
+        efficiency: '100% of file read'
+      };
       
     } catch (h5Error) {
       // Clean up
@@ -118,132 +179,380 @@ async function parseHDF5HeaderStructure(dataView, filename) {
         h5wasm.FS.unlink(tempFilename);
       } catch (e) {}
       
-      console.warn('h5wasm header parsing failed:', h5Error.message);
-      // Fall back to pattern-based structure
+      console.error(`${fileType} full file parsing failed:`, h5Error);
+      throw new Error(`${fileType} full file parsing failed: ${h5Error.message}`);
     }
-  } catch (importError) {
-    console.warn('h5wasm import failed:', importError.message);
+  } catch (error) {
+    console.error(`${fileType} full file parsing failed:`, error);
+    throw new Error(`${fileType} full file parsing failed: ${error.message}`);
+  }
+}
+
+// Manual HDF5 header parsing based on HDF5 specification
+async function parseHDF5SuperblockAndStructure(dataView) {
+  console.log('Attempting manual HDF5 header parsing');
+  
+  // Find HDF5 signature (superblock) - can be at 0, 512, 1024, 2048, etc.
+  let superblockOffset = 0;
+  let signatureFound = findHDF5Signature(dataView, superblockOffset);
+  
+  if (!signatureFound.found) {
+    // Try other possible locations
+    for (let offset = 512; offset < dataView.byteLength; offset *= 2) {
+      const sig = findHDF5Signature(dataView, offset);
+      if (sig.found) {
+        superblockOffset = offset;
+        signatureFound = sig;
+        break;
+      }
+    }
+    if (!signatureFound.found) {
+      throw new Error('HDF5 signature not found in header');
+    }
   }
   
-  // Fallback: Try to detect common hyperspectral data patterns
-  if (filename.toLowerCase().includes('neon') || 
-      filename.toLowerCase().includes('reflectance') ||
-      filename.toLowerCase().includes('sjer')) {
-    
-    // NEON hyperspectral data structure
-    structure.children.push({
-      type: 'group',
-      name: 'SJER',
-      path: '/SJER',
-      children: [
-        {
-          type: 'group',
-          name: 'Reflectance',
-          path: '/SJER/Reflectance',
-          children: [
-            {
-              type: 'dataset',
-              name: 'Reflectance_Data',
-              path: '/SJER/Reflectance/Reflectance_Data',
-              shape: [1000, 1000, 426], // Common hyperspectral dimensions
-              size: 426000000,
-              dtype: 'float32',
-              attributes: [
-                { name: 'description', value: 'Hyperspectral reflectance data', type: 'string' },
-                { name: 'units', value: 'reflectance', type: 'string' }
-              ],
-              isReflectanceCandidate: true
-            },
-            {
-              type: 'dataset',
-              name: 'Wavelength',
-              path: '/SJER/Reflectance/Wavelength',
-              shape: [426],
-              size: 426,
-              dtype: 'float64',
-              attributes: [
-                { name: 'description', value: 'Wavelength values', type: 'string' },
-                { name: 'units', value: 'nanometers', type: 'string' }
-              ],
-              isWavelengthCandidate: true
-            },
-            {
-              type: 'group',
-              name: 'Metadata',
-              path: '/SJER/Reflectance/Metadata',
-              children: [
-                {
-                  type: 'group',
-                  name: 'Coordinate_System',
-                  path: '/SJER/Reflectance/Metadata/Coordinate_System',
-                  children: [
-                    {
-                      type: 'dataset',
-                      name: 'Coordinate_System_String',
-                      path: '/SJER/Reflectance/Metadata/Coordinate_System/Coordinate_System_String',
-                      shape: [1],
-                      size: 1,
-                      dtype: 'string',
-                      attributes: []
-                    },
-                    {
-                      type: 'dataset',
-                      name: 'EPSG',
-                      path: '/SJER/Reflectance/Metadata/Coordinate_System/EPSG',
-                      shape: [1],
-                      size: 1,
-                      dtype: 'int32',
-                      attributes: []
-                    }
-                  ]
-                },
-                {
-                  type: 'group',
-                  name: 'Spectral_Data',
-                  path: '/SJER/Reflectance/Metadata/Spectral_Data',
-                  children: [
-                    {
-                      type: 'dataset',
-                      name: 'FWHM',
-                      path: '/SJER/Reflectance/Metadata/Spectral_Data/FWHM',
-                      shape: [426],
-                      size: 426,
-                      dtype: 'float64',
-                      attributes: [
-                        { name: 'description', value: 'Full Width Half Maximum', type: 'string' }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    });
-    
-  } else {
-    // Generic HDF5 structure - could be enhanced with actual parsing
-    structure.children.push({
-      type: 'group',
-      name: 'data',
-      path: '/data',
-      children: [
-        {
-          type: 'dataset',
-          name: 'dataset1',
-          path: '/data/dataset1',
-          shape: [1000, 1000],
-          size: 1000000,
-          dtype: 'float32',
-          attributes: [],
-          isReflectanceCandidate: true
-        }
-      ]
-    });
+  // Parse superblock
+  const superblock = parseSuperblock(dataView, superblockOffset);
+  console.log('Superblock parsed:', superblock);
+  
+  // Parse root group object header
+  const rootGroupHeader = parseObjectHeader(dataView, superblock.rootGroupAddress, superblock);
+  console.log('Root group header parsed:', rootGroupHeader);
+  
+  // Build structure from root group
+  const structure = {
+    children: []
+  };
+  
+  if (rootGroupHeader.linkInfoMessage) {
+    const links = parseGroupLinks(dataView, rootGroupHeader.linkInfoMessage, superblock);
+    structure.children = await buildStructureFromLinks(dataView, links, superblock);
+  }
+  
+  // If no children found, at least provide basic information about the file
+  if (structure.children.length === 0) {
+    console.log('No children found via link parsing, file may have a complex structure');
+    // Don't create fake data, just return empty structure
   }
   
   return structure;
+}
+
+// Find HDF5 signature in the data
+function findHDF5Signature(dataView, offset) {
+  if (offset + HDF5_SIGNATURE.length > dataView.byteLength) {
+    return { found: false };
+  }
+  
+  for (let i = 0; i < HDF5_SIGNATURE.length; i++) {
+    if (dataView.getUint8(offset + i) !== HDF5_SIGNATURE[i]) {
+      return { found: false };
+    }
+  }
+  
+  return { found: true, offset };
+}
+
+// Parse HDF5 superblock
+function parseSuperblock(dataView, offset) {
+  let pos = offset + HDF5_SIGNATURE.length;
+  
+  // Version of superblock
+  const version = dataView.getUint8(pos);
+  pos += 1;
+  
+  console.log(`Parsing superblock version ${version} at offset ${offset}`);
+  
+  if (version === 0 || version === 1) {
+    // Version 0/1 superblock
+    const freeSpaceVersion = dataView.getUint8(pos);
+    pos += 1;
+    const rootGroupVersion = dataView.getUint8(pos);
+    pos += 1;
+    pos += 1; // Reserved
+    const sharedHeaderVersion = dataView.getUint8(pos);
+    pos += 1;
+    
+    const sizeOfOffsets = dataView.getUint8(pos);
+    pos += 1;
+    const sizeOfLengths = dataView.getUint8(pos);
+    pos += 1;
+    
+    pos += 1; // Reserved
+    
+    const groupLeafNodeK = dataView.getUint16(pos, true);
+    pos += 2;
+    const groupInternalNodeK = dataView.getUint16(pos, true);
+    pos += 2;
+    
+    // Skip file consistency flags - this seems to be the issue
+    pos += 4;
+    
+    if (version === 1) {
+      pos += 2; // Indexed storage internal node K
+      pos += 2; // Reserved
+    }
+    
+    console.log(`About to read addresses at position ${pos}, sizeOfOffsets=${sizeOfOffsets}`);
+    
+    // Base address and addresses
+    const baseAddress = readAddress(dataView, pos, sizeOfOffsets);
+    pos += sizeOfOffsets;
+    
+    const freespaceInfoAddress = readAddress(dataView, pos, sizeOfOffsets);
+    pos += sizeOfOffsets;
+    
+    const endOfFileAddress = readAddress(dataView, pos, sizeOfOffsets);
+    pos += sizeOfOffsets;
+    
+    const driverInfoAddress = readAddress(dataView, pos, sizeOfOffsets);
+    pos += sizeOfOffsets;
+    
+    const rootGroupAddress = readAddress(dataView, pos, sizeOfOffsets);
+    
+    console.log(`Parsed addresses: base=0x${baseAddress.toString(16)}, root=0x${rootGroupAddress.toString(16)}`);
+    
+    return {
+      version,
+      sizeOfOffsets,
+      sizeOfLengths,
+      baseAddress,
+      freespaceInfoAddress,
+      endOfFileAddress,
+      driverInfoAddress,
+      rootGroupAddress
+    };
+  } else if (version === 2 || version === 3) {
+    // Version 2/3 superblock
+    const sizeOfOffsets = dataView.getUint8(pos);
+    pos += 1;
+    const sizeOfLengths = dataView.getUint8(pos);
+    pos += 1;
+    
+    pos += 1; // File consistency flags
+    
+    const baseAddress = readAddress(dataView, pos, sizeOfOffsets);
+    pos += sizeOfOffsets;
+    
+    const superblockExtAddress = readAddress(dataView, pos, sizeOfOffsets);
+    pos += sizeOfOffsets;
+    
+    const endOfFileAddress = readAddress(dataView, pos, sizeOfOffsets);
+    pos += sizeOfOffsets;
+    
+    const rootGroupAddress = readAddress(dataView, pos, sizeOfOffsets);
+    
+    return {
+      version,
+      sizeOfOffsets,
+      sizeOfLengths,
+      baseAddress,
+      superblockExtAddress,
+      endOfFileAddress,
+      rootGroupAddress
+    };
+  } else {
+    throw new Error(`Unsupported superblock version: ${version}`);
+  }
+}
+
+// Read address based on size
+function readAddress(dataView, offset, size) {
+  if (size === 4) {
+    return dataView.getUint32(offset, true); // little endian
+  } else if (size === 8) {
+    // Read as two 32-bit values for 64-bit address
+    const low = dataView.getUint32(offset, true);
+    const high = dataView.getUint32(offset + 4, true);
+    return (high * 0x100000000) + low;
+  }
+  throw new Error(`Unsupported address size: ${size}`);
+}
+
+// Parse object header
+function parseObjectHeader(dataView, address, superblock) {
+  let pos = address;
+  
+  // Object header version
+  const version = dataView.getUint8(pos);
+  pos += 1;
+  
+  if (version === 1) {
+    pos += 1; // Reserved
+    
+    const headerSize = dataView.getUint16(pos, true);
+    pos += 2;
+    
+    const totalMessages = dataView.getUint16(pos, true);
+    pos += 2;
+    
+    const objectReferenceCount = dataView.getUint32(pos, true);
+    pos += 4;
+    
+    const objectHeaderSize = dataView.getUint32(pos, true);
+    pos += 4;
+    
+    pos += 4; // Reserved
+    
+    // Parse messages
+    const messages = [];
+    for (let i = 0; i < totalMessages; i++) {
+      const messageType = dataView.getUint16(pos, true);
+      pos += 2;
+      
+      const messageSize = dataView.getUint16(pos, true);
+      pos += 2;
+      
+      const messageFlags = dataView.getUint8(pos);
+      pos += 1;
+      
+      pos += 3; // Reserved
+      
+      const messageData = new Uint8Array(dataView.buffer, pos, messageSize);
+      messages.push({
+        type: messageType,
+        size: messageSize,
+        flags: messageFlags,
+        data: messageData
+      });
+      
+      pos += messageSize;
+    }
+    
+    return {
+      version,
+      headerSize,
+      totalMessages,
+      objectReferenceCount,
+      objectHeaderSize,
+      messages,
+      linkInfoMessage: messages.find(m => m.type === 0x02) // Link info message
+    };
+  } else if (version === 2) {
+    // Version 2 object header - more complex, implement if needed
+    throw new Error('Object header version 2 not yet implemented');
+  } else {
+    throw new Error(`Unsupported object header version: ${version}`);
+  }
+}
+
+// Parse group links from symbol table or fractal heap
+function parseGroupLinks(dataView, linkInfoMessage, superblock) {
+  const links = [];
+  
+  if (!linkInfoMessage || !linkInfoMessage.data) {
+    return links;
+  }
+  
+  // This is a simplified parsing of link info message
+  // In reality, this would need to parse the fractal heap or symbol table
+  // For now, we'll return empty array but log that we found the message
+  console.log('Found link info message, but detailed parsing not yet implemented');
+  
+  return links;
+}
+
+// Build structure from parsed links
+async function buildStructureFromLinks(dataView, links, superblock) {
+  const children = [];
+  
+  for (const link of links) {
+    try {
+      // Parse the object header at the link's address to determine type
+      const objectHeader = parseObjectHeader(dataView, link.address, superblock);
+      
+      // Determine if it's a group or dataset based on messages
+      const isGroup = objectHeader.messages.some(m => m.type === 0x02); // Link info message
+      const isDataset = objectHeader.messages.some(m => m.type === 0x03); // Dataspace message
+      
+      const child = {
+        type: isGroup ? 'group' : (isDataset ? 'dataset' : 'unknown'),
+        name: link.name,
+        path: link.path,
+        children: []
+      };
+      
+      // If it's a dataset, try to extract shape and type info
+      if (isDataset) {
+        const dataspaceMsg = objectHeader.messages.find(m => m.type === 0x03);
+        const datatypeMsg = objectHeader.messages.find(m => m.type === 0x04);
+        
+        if (dataspaceMsg) {
+          // Parse dataspace message for shape
+          const shape = parseDataspaceMessage(dataspaceMsg.data);
+          child.shape = shape;
+          child.size = shape.reduce((a, b) => a * b, 1);
+        }
+        
+        if (datatypeMsg) {
+          // Parse datatype message for dtype
+          const dtype = parseDatatypeMessage(datatypeMsg.data);
+          child.dtype = dtype;
+        }
+      }
+      
+      // If it's a group, recursively parse its children
+      if (isGroup && objectHeader.linkInfoMessage) {
+        const childLinks = parseGroupLinks(dataView, objectHeader.linkInfoMessage, superblock);
+        child.children = await buildStructureFromLinks(dataView, childLinks, superblock);
+      }
+      
+      children.push(child);
+    } catch (error) {
+      console.warn(`Failed to parse link ${link.name}:`, error);
+    }
+  }
+  
+  return children;
+}
+
+// Parse dataspace message to extract shape
+function parseDataspaceMessage(data) {
+  if (data.length < 2) return [1];
+  
+  const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const version = dataView.getUint8(0);
+  const dimensionality = dataView.getUint8(1);
+  
+  if (dimensionality === 0) return [1]; // scalar
+  
+  const shape = [];
+  let pos = 4; // Skip version, dimensionality, and flags
+  
+  for (let i = 0; i < dimensionality; i++) {
+    // Read dimension size (assuming 8 bytes each)
+    const size = dataView.getUint32(pos, true) + (dataView.getUint32(pos + 4, true) * 0x100000000);
+    shape.push(size);
+    pos += 8;
+  }
+  
+  return shape;
+}
+
+// Parse datatype message to extract dtype
+function parseDatatypeMessage(data) {
+  if (data.length < 4) return 'unknown';
+  
+  const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const classAndVersion = dataView.getUint8(0);
+  const typeClass = classAndVersion & 0x0F;
+  
+  // Map HDF5 type classes to common names
+  const typeMap = {
+    0: 'int8',
+    1: 'float32',
+    2: 'time',
+    3: 'string',
+    4: 'bitfield',
+    5: 'opaque',
+    6: 'compound',
+    7: 'reference',
+    8: 'enum',
+    9: 'variable_length',
+    10: 'array'
+  };
+  
+  return typeMap[typeClass] || 'unknown';
 }
 
 // Extract actual HDF5 structure from h5wasm file handle

@@ -63,6 +63,8 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
       // Log performance metrics
       if (structure.isHeaderOnly && structure.parsingTime) {
         console.log(`Header-only parsing took ${structure.parsingTime.toFixed(2)}ms - ${structure.efficiency} - truly instant!`);
+      } else if (structure.parsingTime) {
+        console.log(`Full file parsing took ${structure.parsingTime.toFixed(2)}ms - ${structure.efficiency}`);
       }
       
       // Auto-select obvious candidates

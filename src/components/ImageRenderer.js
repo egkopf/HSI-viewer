@@ -43,6 +43,9 @@ const ImageRenderer = ({
   loadedBands, 
   dataFile, 
   fileType,
+  wavelengthData,
+  reflectanceData,
+  isStructured = false,
   enableSharedSpectral = false,
   isMainSpectralDisplay = true
 }) => {
@@ -213,15 +216,16 @@ const ImageRenderer = ({
       console.log('Loading new bands:', newBandNumbers);
 
       let newBandData;
-      if (fileType === 'geotiff') {
+      // Check for structured data first (HDF5/NetCDF files processed through structured upload)
+      if (fileType === 'netcdf' || fileType === 'structured' || isStructured) {
+        console.log('Using structured data parser for band change');
+        newBandData = await loadStructuredBands(reflectanceData, metadata, newBandNumbers);
+      } else if (fileType === 'geotiff') {
         console.log('Using GeoTIFF parser for band change');
         newBandData = await parseGeoTIFFBands(dataFile, metadata, newBandNumbers);
       } else if (fileType === 'hdf5') {
         console.log('Using HDF5 parser for band change');
         newBandData = await parseHDF5Bands(dataFile, metadata, newBandNumbers);
-      } else if (fileType === 'netcdf' || fileType === 'structured' || fileData.isStructured) {
-        console.log('Using structured data parser for band change');
-        newBandData = await loadStructuredBands(fileData.reflectanceData, metadata, newBandNumbers);
       } else {
         console.log('Using ENVI parser for band change');
         newBandData = await parseSpecificBands(dataFile, metadata, newBandNumbers);
@@ -493,12 +497,13 @@ const ImageRenderer = ({
       console.log(`Extracting spectrum for pixel (${x}, ${y})`);
       
       let pixelSpectrum;
-      if (fileType === 'geotiff') {
+      // Check for structured data first (HDF5/NetCDF files processed through structured upload)
+      if (fileType === 'netcdf' || fileType === 'structured' || isStructured) {
+        pixelSpectrum = await extractStructuredPixelSpectrum(reflectanceData, metadata, wavelengthData, x, y);
+      } else if (fileType === 'geotiff') {
         pixelSpectrum = await extractGeoTIFFPixelSpectrum(dataFile, metadata, x, y);
       } else if (fileType === 'hdf5') {
         pixelSpectrum = await extractHDF5PixelSpectrum(dataFile, metadata, x, y);
-      } else if (fileType === 'netcdf' || fileType === 'structured' || fileData.isStructured) {
-        pixelSpectrum = await extractStructuredPixelSpectrum(fileData.reflectanceData, metadata, fileData.wavelengthData, x, y);
       } else {
         pixelSpectrum = await extractPixelSpectrum(dataFile, metadata, x, y);
       }
