@@ -168,7 +168,12 @@ const FileStructureTree = ({ structure, onDatasetSelect, selectedWavelength, sel
         <div className="mb-2 text-xs text-gray-600">
           Select datasets for wavelength (λ) and reflectance (R) data:
         </div>
-        {renderNode(structure)}
+        {/* Hide root level and show its children directly */}
+        {structure.children && structure.children.length > 0 ? (
+          structure.children.map(child => renderNode(child, 0))
+        ) : (
+          renderNode(structure)
+        )}
       </div>
     </div>
   );

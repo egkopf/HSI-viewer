@@ -19,21 +19,34 @@ export async function parseHDF5StructureFromHeader(file) {
     
     console.log(`${fileType} lazy loading completed in ${parsingTime.toFixed(2)}ms using WORKERFS`);
     
-    // Convert metadata to structure format expected by the viewer
-    const structure = convertMetadataToStructure(metadata, fileType);
+    // Check if metadata is already in structure format (new worker approach)
+    const structure = metadata.type === 'hdf5' ? metadata : convertMetadataToStructure(metadata, fileType);
     
-    return {
-      type: 'hdf5',
-      name: 'root',
-      path: '/',
-      children: structure.children,
-      format: `${fileType} (WORKERFS Lazy)`,
-      isHeaderOnly: false, // WORKERFS provides full lazy access without loading into memory
-      parsingTime,
-      fileSize: file.size,
-      efficiency: 'True lazy loading via WORKERFS - no data loaded into memory',
-      metadata // Include the parsed metadata for use in data loading
-    };
+    // If structure is already complete, use it directly with additional metadata
+    if (structure.type === 'hdf5') {
+      return {
+        ...structure,
+        format: `${fileType} (WORKERFS Lazy)`,
+        isHeaderOnly: false, // WORKERFS provides full lazy access without loading into memory
+        parsingTime,
+        fileSize: file.size,
+        efficiency: 'True lazy loading via WORKERFS - no data loaded into memory'
+      };
+    } else {
+      // Legacy format conversion
+      return {
+        type: 'hdf5',
+        name: 'root',
+        path: '/',
+        children: structure.children,
+        format: `${fileType} (WORKERFS Lazy)`,
+        isHeaderOnly: false, // WORKERFS provides full lazy access without loading into memory
+        parsingTime,
+        fileSize: file.size,
+        efficiency: 'True lazy loading via WORKERFS - no data loaded into memory',
+        metadata // Include the parsed metadata for use in data loading
+      };
+    }
     
   } catch (error) {
     console.error(`${fileType} instant parsing failed:`, error);

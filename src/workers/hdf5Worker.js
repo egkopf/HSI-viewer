@@ -117,10 +117,8 @@ async function parseWithBuffer(h5, buffer, fileName) {
   }
 }
 
-// Extract metadata from HDF5 file (adapted from parseHDF5.js)
+// Extract complete file structure from HDF5 file (adapted from parseHDF5Structure.js)
 async function extractHDF5MetadataInWorker(file) {
-  const metadata = {};
-  
   try {
     // Get root level keys first to check if file is valid
     let rootKeys;
@@ -131,186 +129,208 @@ async function extractHDF5MetadataInWorker(file) {
       throw new Error('Unable to read HDF5 file structure - file may be corrupted or not a valid HDF5 file');
     }
     
-    // Common HDF5 structures for hyperspectral data
-    const commonPaths = [
-      '/SJER/Reflectance/Reflectance_Data',      // NEON reflectance data
-      '/Reflectance/Reflectance_Data',           // NEON alternative
-      ...(rootKeys.length > 0 ? rootKeys.map(key => `/${key}/Reflectance/Reflectance_Data`) : []),
-      '/reflectance',                            // Generic
-      '/data',                                   // Generic
-      '/image',                                  // Generic
-      '/cube',                                   // Generic
-      '/hyperspectral',                          // Generic
-      '/radiance',                               // Radiance data
-      '/dataset'                                 // Generic
-    ];
+    // Extract complete file structure
+    const structure = {
+      type: 'hdf5',
+      name: 'root',
+      path: '/',
+      children: []
+    };
     
-    let mainDataset = null;
-    let datasetPath = null;
+    console.log(`Found ${rootKeys.length} root level items`);
     
-    // Try to find the main hyperspectral dataset
-    for (const path of commonPaths) {
+    // Process each root level item
+    for (const key of rootKeys) {
       try {
-        const pathParts = path.split('/').filter(p => p);
-        let current = file;
-        let exists = true;
-        
-        for (const part of pathParts) {
-          try {
-            current = current.get(part);
-          } catch (e) {
-            exists = false;
-            break;
-          }
-        }
-        
-        if (exists && current.shape) {
-          mainDataset = current;
-          datasetPath = path;
-          console.log(`Found main dataset at: ${path}`);
-          break;
-        }
-      } catch (e) {
-        // Path doesn't exist, continue
+        const item = file.get(key);
+        const childStructure = processHDF5ItemInWorker(item, key, `/${key}`);
+        structure.children.push(childStructure);
+      } catch (error) {
+        console.warn(`Could not process HDF5 item ${key}:`, error);
+        // Add as unknown item
+        structure.children.push({
+          type: 'unknown',
+          name: key,
+          path: `/${key}`,
+          error: error.message
+        });
       }
     }
     
-    // If no common path found, look for largest 3D dataset
-    if (!mainDataset) {
-      console.log('No common dataset path found, searching root keys:', rootKeys);
-      for (const key of rootKeys) {
-        try {
-          const item = file.get(key);
-          if (item.shape && item.shape.length === 3) {
-            if (!mainDataset || item.size > mainDataset.size) {
-              mainDataset = item;
-              datasetPath = `/${key}`;
-              console.log(`Selected dataset '${key}' with path: ${datasetPath}`);
-            }
-          }
-        } catch (e) {
-          console.log(`Failed to access root key '${key}':`, e.message);
-        }
-      }
-    }
-    
-    if (!mainDataset) {
-      throw new Error('No suitable hyperspectral dataset found in HDF5 file');
-    }
-    
-    // Extract dimensions from dataset shape
-    const shape = mainDataset.shape;
-    let samples, lines, bands;
-    
-    if (shape.length === 3) {
-      // Heuristic: assume the largest dimension is spatial
-      const sortedIndices = shape.map((val, idx) => ({ val, idx }))
-        .sort((a, b) => b.val - a.val);
-      
-      if (sortedIndices[0].val > sortedIndices[1].val * 2) {
-        // Largest dimension is much larger, likely spatial
-        if (sortedIndices[0].idx === 0) {
-          [lines, samples, bands] = shape;
-        } else if (sortedIndices[0].idx === 1) {
-          [lines, samples, bands] = shape;
-        } else {
-          [bands, lines, samples] = shape;
-        }
-      } else {
-        // Assume [lines, samples, bands] format (most common)
-        [lines, samples, bands] = shape;
-      }
-    } else {
-      throw new Error(`Unsupported dataset shape: ${shape}`);
-    }
-    
-    // Extract additional metadata from attributes
-    const attrs = mainDataset.attrs || {};
-    
-    // Look for wavelength information
-    let wavelengthValues = null;
-    const wavelengthKeys = ['wavelength', 'wavelengths', 'wl', 'bands'];
-    
-    for (const key of wavelengthKeys) {
-      if (attrs[key]) {
-        try {
-          wavelengthValues = Array.from(attrs[key]);
-          break;
-        } catch (e) {
-          // Continue looking
-        }
-      }
-    }
-    
-    // Look for wavelength dataset
-    if (!wavelengthValues) {
-      const wavelengthPaths = [
-        '/SJER/Reflectance/Metadata/Spectral_Data/Wavelength',
-        '/Reflectance/Metadata/Spectral_Data/Wavelength',
-        '/Metadata/Spectral_Data/Wavelength',
-        '/wavelength',
-        '/wavelengths',
-        '/wl',
-        '/bands'
-      ];
-      
-      for (const path of wavelengthPaths) {
-        try {
-          const pathParts = path.split('/').filter(p => p);
-          let current = file;
-          let exists = true;
-          
-          for (const part of pathParts) {
-            try {
-              current = current.get(part);
-            } catch (e) {
-              exists = false;
-              break;
-            }
-          }
-          
-          if (exists && current.value) {
-            wavelengthValues = Array.from(current.value);
-            console.log(`Found wavelengths at: ${path}`);
-            break;
-          }
-        } catch (e) {
-          // Path doesn't exist or can't be read
-        }
-      }
-    }
-    
-    // Build metadata object
-    metadata.samples = samples;
-    metadata.lines = lines;
-    metadata.bands = bands;
-    metadata.dataType = 12; // Default to uint16
-    metadata.interleave = 'bsq';
-    metadata.byteOrder = 0;
-    metadata.isBigEndian = false;
-    metadata.headerOffset = 0;
-    metadata.datasetPath = datasetPath;
-    metadata.shape = shape;
-    metadata.wavelengthValues = wavelengthValues;
-    metadata.wavelengthUnits = attrs.units || attrs.wavelength_units || 'nm';
-    metadata.dataIgnoreValue = attrs.data_ignore_value || attrs.nodata || attrs.missing_value || null;
-    metadata.reflectanceScaleFactor = attrs.scale_factor || attrs.reflectance_scale_factor || null;
-    metadata["data ignore value"] = metadata.dataIgnoreValue;
-    
-    console.log('Metadata extracted in worker:', {
-      samples: metadata.samples,
-      lines: metadata.lines,
-      bands: metadata.bands,
-      datasetPath: metadata.datasetPath,
-      hasWavelengths: !!metadata.wavelengthValues
-    });
-    
-    return metadata;
+    console.log('Complete HDF5 structure extracted in worker');
+    return structure;
     
   } catch (error) {
-    console.error('Error extracting HDF5 metadata in worker:', error);
+    console.error('Error extracting HDF5 structure in worker:', error);
     throw error;
   }
+}
+
+// Process individual HDF5 item (group or dataset) in worker
+function processHDF5ItemInWorker(item, name, path) {
+  try {
+    // Check if it's a group (has keys method)
+    if (typeof item.keys === 'function') {
+      return processHDF5GroupInWorker(item, name, path);
+    }
+    
+    // Check if it's a dataset (has shape or value property)
+    if (item.shape !== undefined || item.value !== undefined) {
+      return processHDF5DatasetInWorker(item, name, path);
+    }
+    
+    // Unknown item type
+    return {
+      type: 'unknown',
+      name,
+      path,
+      info: 'Unknown HDF5 item type'
+    };
+  } catch (error) {
+    console.warn(`Error processing HDF5 item ${path}:`, error);
+    return {
+      type: 'error',
+      name,
+      path,
+      error: error.message
+    };
+  }
+}
+
+// Process HDF5 group (directory-like structure) in worker
+function processHDF5GroupInWorker(group, name, path) {
+  const groupStructure = {
+    type: 'group',
+    name,
+    path,
+    children: []
+  };
+
+  try {
+    const keys = group.keys();
+    console.log(`Group ${path} has ${keys.length} children`);
+    
+    for (const key of keys) {
+      try {
+        const childItem = group.get(key);
+        const childPath = `${path}/${key}`;
+        const childStructure = processHDF5ItemInWorker(childItem, key, childPath);
+        groupStructure.children.push(childStructure);
+      } catch (error) {
+        console.warn(`Could not process HDF5 child ${key} in ${path}:`, error);
+        groupStructure.children.push({
+          type: 'error',
+          name: key,
+          path: `${path}/${key}`,
+          error: error.message
+        });
+      }
+    }
+  } catch (error) {
+    console.error(`Error processing HDF5 group ${path}:`, error);
+    groupStructure.error = error.message;
+  }
+
+  return groupStructure;
+}
+
+// Process HDF5 dataset (actual data) in worker
+function processHDF5DatasetInWorker(dataset, name, path) {
+  const datasetStructure = {
+    type: 'dataset',
+    name,
+    path,
+    shape: dataset.shape || [],
+    size: dataset.size || 0,
+    dtype: dataset.dtype || 'unknown',
+    attributes: []
+  };
+
+  // Indicate that data is not loaded in worker context
+  datasetStructure.dataNotLoaded = true;
+
+  try {
+    // Extract attributes
+    if (dataset.attrs) {
+      for (const [attrName, attrValue] of Object.entries(dataset.attrs)) {
+        datasetStructure.attributes.push({
+          name: attrName,
+          value: attrValue,
+          type: typeof attrValue
+        });
+      }
+    }
+
+    // Determine if this could be wavelength or reflectance data
+    datasetStructure.isWavelengthCandidate = isWavelengthCandidateInWorker(datasetStructure);
+    datasetStructure.isReflectanceCandidate = isReflectanceCandidateInWorker(datasetStructure);
+
+  } catch (error) {
+    console.warn(`Error processing HDF5 dataset attributes ${path}:`, error);
+    datasetStructure.error = error.message;
+  }
+
+  return datasetStructure;
+}
+
+// Check if a dataset could contain wavelength data (worker version)
+function isWavelengthCandidateInWorker(dataset) {
+  const name = dataset.name.toLowerCase();
+  const path = dataset.path.toLowerCase();
+  const wavelengthKeywords = ['wavelength', 'wavelengths', 'wl', 'lambda', 'frequency', 'wavenumber', 'spectral'];
+  
+  // Check name and path
+  if (wavelengthKeywords.some(keyword => name.includes(keyword) || path.includes(keyword))) {
+    return true;
+  }
+  
+  // Check attributes
+  if (dataset.attributes) {
+    const hasWavelengthAttribute = dataset.attributes.some(attr => 
+      wavelengthKeywords.some(keyword => 
+        attr.name.toLowerCase().includes(keyword) || 
+        (typeof attr.value === 'string' && attr.value.toLowerCase().includes(keyword))
+      )
+    );
+    if (hasWavelengthAttribute) return true;
+  }
+  
+  // Check if it's 1D and has reasonable size for wavelength data
+  if (dataset.shape && dataset.shape.length === 1 && dataset.size > 10 && dataset.size < 10000) {
+    return true;
+  }
+  
+  return false;
+}
+
+// Check if a dataset could contain reflectance/radiance data (worker version)
+function isReflectanceCandidateInWorker(dataset) {
+  const name = dataset.name.toLowerCase();
+  const path = dataset.path.toLowerCase();
+  const reflectanceKeywords = ['reflectance', 'radiance', 'data', 'cube', 'image', 'spectral', 'hyperspectral'];
+  
+  // Check name and path
+  if (reflectanceKeywords.some(keyword => name.includes(keyword) || path.includes(keyword))) {
+    return true;
+  }
+  
+  // Check attributes
+  if (dataset.attributes) {
+    const hasReflectanceAttribute = dataset.attributes.some(attr => 
+      reflectanceKeywords.some(keyword => 
+        attr.name.toLowerCase().includes(keyword) || 
+        (typeof attr.value === 'string' && attr.value.toLowerCase().includes(keyword))
+      )
+    );
+    if (hasReflectanceAttribute) return true;
+  }
+  
+  // Check if it's 3D (likely hyperspectral cube)
+  if (dataset.shape && dataset.shape.length === 3 && dataset.size > 1000) {
+    return true;
+  }
+  
+  return false;
 }
 
 // Handle messages from main thread
