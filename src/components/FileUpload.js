@@ -390,7 +390,6 @@ const FileUpload = ({ onDataReady }) => {
         <div className="relative">
           <input
             type="file"
-            accept=".h5,.hdf5,.tif,.tiff,.hdr,.bsq,.bil,.bip,.nc,.netcdf"
             multiple
             onChange={(e) => handleFileInputChange(e)}
             disabled={processing || showWavelengthInput}
