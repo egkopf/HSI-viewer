@@ -12,6 +12,46 @@ const FileUpload = ({ onDataReady }) => {
   const [pendingFileData, setPendingFileData] = useState(null);
   const [uploadMode, setUploadMode] = useState('standard'); // 'standard' or 'structured'
 
+  const handleFileInputChange = (e) => {
+    const files = Array.from(e.target.files);
+    
+    // Filter files to allow only valid ENVI, structured, and GeoTIFF files
+    const validFiles = files.filter(file => {
+      const fileName = file.name.toLowerCase();
+      
+      // Always allow these structured formats
+      if (fileName.endsWith('.h5') || fileName.endsWith('.hdf5') || 
+          fileName.endsWith('.nc') || fileName.endsWith('.netcdf') ||
+          fileName.endsWith('.tif') || fileName.endsWith('.tiff')) {
+        return true;
+      }
+      
+      // Always allow ENVI files with proper extensions
+      if (fileName.endsWith('.hdr') || fileName.endsWith('.bsq') || 
+          fileName.endsWith('.bil') || fileName.endsWith('.bip')) {
+        return true;
+      }
+      
+      // Allow files without extensions (potential ENVI binary files)
+      if (!fileName.includes('.')) {
+        return true;
+      }
+      
+      // Reject everything else (like .txt files)
+      return false;
+    });
+    
+    if (validFiles.length !== files.length) {
+      const rejectedFiles = files.filter(file => !validFiles.includes(file));
+      const rejectedNames = rejectedFiles.map(f => f.name).join(', ');
+      alert(`Some files were not accepted: ${rejectedNames}\n\nAllowed files:\n- NetCDF/HDF5: .nc, .netcdf, .h5, .hdf5\n- GeoTIFF: .tif, .tiff\n- ENVI: .hdr (header), .bsq/.bil/.bip (binary), or no extension (binary)`);
+    }
+    
+    if (validFiles.length > 0) {
+      processFiles(validFiles);
+    }
+  };
+
   const processFiles = async (files) => {
     try {
       setProcessing(true);
@@ -350,8 +390,9 @@ const FileUpload = ({ onDataReady }) => {
         <div className="relative">
           <input
             type="file"
+            accept=".h5,.hdf5,.tif,.tiff,.hdr,.bsq,.bil,.bip,.nc,.netcdf"
             multiple
-            onChange={(e) => processFiles(e.target.files)}
+            onChange={(e) => handleFileInputChange(e)}
             disabled={processing || showWavelengthInput}
             className="w-full text-xs"
           />

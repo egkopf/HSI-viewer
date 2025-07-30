@@ -96,9 +96,6 @@ const FileStructureTree = ({ structure, onDatasetSelect, selectedWavelength, sel
             {node.dataType && (
               <span>Type: {node.dataType} </span>
             )}
-            {node.dataNotLoaded && (
-              <span className="text-yellow-600">(metadata only) </span>
-            )}
           </div>
         )}
         
