@@ -12,8 +12,8 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
   const [selectedReflectance, setSelectedReflectance] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState(null);
-  const [useSelectiveReading, setUseSelectiveReading] = useState(true);
-  const [useHeaderOnly, setUseHeaderOnly] = useState(true);
+  const [useSelectiveReading] = useState(true);
+  const [useHeaderOnly] = useState(true);
 
   const handleFileSelect = async (file) => {
     if (!file) return;
@@ -363,49 +363,6 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
               )}
             </div>
           </div>
-          
-          {/* Processing options */}
-          {selectedFile && (
-            <div className="mt-4 pt-4 border-t">
-              <h5 className="font-medium mb-2 text-sm">Processing Options:</h5>
-              
-              {/* Header-only parsing for all files */}
-              <div className="mb-3">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={useHeaderOnly}
-                    onChange={(e) => setUseHeaderOnly(e.target.checked)}
-                    className="rounded"
-                  />
-                  <span>Use header-only parsing (instant for any file size)</span>
-                </label>
-                <div className="text-xs text-gray-600 mt-1">
-                  Reads only file header (~5-50MB) for structure - works on 2.9GB files instantly
-                  <br />NetCDF4 and HDF5 use the same format, so both are parsed identically
-                </div>
-              </div>
-
-              
-              {/* Selective reading option for large files */}
-              {selectedFile.size > 1024 * 1024 * 1024 && (
-                <div>
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={useSelectiveReading}
-                      onChange={(e) => setUseSelectiveReading(e.target.checked)}
-                      className="rounded"
-                    />
-                    <span>Use selective reading (for very large files)</span>
-                  </label>
-                  <div className="text-xs text-gray-600 mt-1">
-                    Attempts to read only the selected datasets instead of the entire file
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       )}
 

@@ -350,49 +350,48 @@ const FileUpload = ({ onDataReady }) => {
         <div className="relative">
           <input
             type="file"
-            accept=".h5,.hdf5,.tif,.tiff,.hdr,.bsq,.bil,.bip,.nc,.netcdf,*"
             multiple
             onChange={(e) => processFiles(e.target.files)}
             disabled={processing || showWavelengthInput}
             className="w-full text-xs"
           />
+          
+          {processing && (
+            <div className="absolute inset-0 bg-blue-100 bg-opacity-90 flex items-center justify-center rounded">
+              <div className="text-xs text-blue-800 font-medium">
+                Loading data
+                <span className="dot-1">.</span>
+                <span className="dot-2">.</span>
+                <span className="dot-3">.</span>
+              </div>
+              <style>{`
+                .dot-1 {
+                  animation: dot1 2s infinite;
+                }
+                .dot-2 {
+                  animation: dot2 2s infinite;
+                }
+                .dot-3 {
+                  animation: dot3 2s infinite;
+                }
+                @keyframes dot1 {
+                  0%, 100% { opacity: 0; }
+                  25%, 50%, 75% { opacity: 1; }
+                }
+                @keyframes dot2 {
+                  0%, 25%, 100% { opacity: 0; }
+                  50%, 75% { opacity: 1; }
+                }
+                @keyframes dot3 {
+                  0%, 25%, 50%, 100% { opacity: 0; }
+                  75% { opacity: 1; }
+                }
+              `}</style>
+            </div>
+          )}
         </div>
       ) : (
         <StructuredFileUpload onFileProcessed={handleStructuredFileProcessed} />
-      )}
-
-      {uploadMode === 'standard' && processing && (
-        <div className="absolute inset-0 bg-blue-100 bg-opacity-90 flex items-center justify-center rounded">
-          <div className="text-xs text-blue-800 font-medium">
-            Loading data
-            <span className="dot-1">.</span>
-            <span className="dot-2">.</span>
-            <span className="dot-3">.</span>
-          </div>
-          <style>{`
-            .dot-1 {
-              animation: dot1 2s infinite;
-            }
-            .dot-2 {
-              animation: dot2 2s infinite;
-            }
-            .dot-3 {
-              animation: dot3 2s infinite;
-            }
-            @keyframes dot1 {
-              0%, 100% { opacity: 0; }
-              25%, 50%, 75% { opacity: 1; }
-            }
-            @keyframes dot2 {
-              0%, 25%, 100% { opacity: 0; }
-              50%, 75% { opacity: 1; }
-            }
-            @keyframes dot3 {
-              0%, 25%, 50%, 100% { opacity: 0; }
-              75% { opacity: 1; }
-            }
-          `}</style>
-        </div>
       )}
 
       {showWavelengthInput && (
