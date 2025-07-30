@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { parseNetCDFStructure, loadNetCDFVariable } from '../utils/parseNetCDF.js';
 import { parseHDF5Structure, loadHDF5Dataset } from '../utils/parseHDF5Structure.js';
-import { parseHDF5StructureFromHeader, loadHDF5DatasetOnDemand } from '../utils/hdf5HeaderParser.js';
+import { parseHDF5StructureFromHeader, loadHDF5DatasetOnDemand, parseHDF5Bands, extractHDF5PixelSpectrum } from '../utils/hdf5HeaderParser.js';
 import { processStructuredData } from '../utils/processStructuredData.js';
 import FileStructureTree from './FileStructureTree.js';
 
@@ -154,14 +154,23 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
             attributes: reflectanceResult.attributes
           };
         } else {
-          // For header-only parsed files, use HDF5 dataset loading
+          // For header-only parsed files, use persistent HDF5 dataset loading
           const fileSizeGB = selectedFile.size / (1024 * 1024 * 1024);
-          const enableSelectiveReading = fileSizeGB > 1 && useSelectiveReading;
+          const enableSelectiveReading = fileSizeGB > 0.1 && useSelectiveReading; // Lower threshold to 100MB
           
-          console.log(`Loading HDF5/NetCDF4 datasets from ${fileSizeGB.toFixed(1)}GB file, selective reading: ${enableSelectiveReading}`);
+          console.log(`Loading HDF5/NetCDF4 datasets from ${fileSizeGB.toFixed(1)}GB file, persistent handles: ${enableSelectiveReading}`);
           
-          const wavelengthResult = await loadHDF5Dataset(selectedFile, selectedWavelength, { useSelectiveReading: enableSelectiveReading });
-          const reflectanceResult = await loadHDF5Dataset(selectedFile, selectedReflectance, { useSelectiveReading: enableSelectiveReading });
+          let wavelengthResult, reflectanceResult;
+          if (enableSelectiveReading) {
+            // Use new persistent file handle approach (no file reloading!)
+            console.log('Using persistent file handles for HDF5/NetCDF4 loading...');
+            wavelengthResult = await loadHDF5DatasetOnDemand(selectedFile, selectedWavelength);
+            reflectanceResult = await loadHDF5DatasetOnDemand(selectedFile, selectedReflectance);
+          } else {
+            // Fallback to old approach for smaller files
+            wavelengthResult = await loadHDF5Dataset(selectedFile, selectedWavelength, { useSelectiveReading: false });
+            reflectanceResult = await loadHDF5Dataset(selectedFile, selectedReflectance, { useSelectiveReading: false });
+          }
           
           wavelengthData = {
             values: Array.from(wavelengthResult.data),
@@ -179,13 +188,22 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
         // Load HDF5 datasets with H5Web or selective reading for large files
         const fileSizeGB = selectedFile.size / (1024 * 1024 * 1024);
         
-        // Use standard approach with selective reading
-        const enableSelectiveReading = fileSizeGB > 1 && useSelectiveReading;
+        // Use persistent file handles for efficient loading
+        const enableSelectiveReading = fileSizeGB > 0.1 && useSelectiveReading; // Lower threshold to 100MB
         
-        console.log(`Loading HDF5 datasets from ${fileSizeGB.toFixed(1)}GB file, selective reading: ${enableSelectiveReading}`);
+        console.log(`Loading HDF5 datasets from ${fileSizeGB.toFixed(1)}GB file, persistent handles: ${enableSelectiveReading}`);
         
-        const wavelengthResult = await loadHDF5Dataset(selectedFile, selectedWavelength, { useSelectiveReading: enableSelectiveReading });
-        const reflectanceResult = await loadHDF5Dataset(selectedFile, selectedReflectance, { useSelectiveReading: enableSelectiveReading });
+        let wavelengthResult, reflectanceResult;
+        if (enableSelectiveReading) {
+          // Use new persistent file handle approach (no file reloading!)
+          console.log('Using persistent file handles for HDF5 loading...');
+          wavelengthResult = await loadHDF5DatasetOnDemand(selectedFile, selectedWavelength);
+          reflectanceResult = await loadHDF5DatasetOnDemand(selectedFile, selectedReflectance);
+        } else {
+          // Fallback to old approach for smaller files
+          wavelengthResult = await loadHDF5Dataset(selectedFile, selectedWavelength, { useSelectiveReading: false });
+          reflectanceResult = await loadHDF5Dataset(selectedFile, selectedReflectance, { useSelectiveReading: false });
+        }
         
         wavelengthData = {
           values: Array.from(wavelengthResult.data),
