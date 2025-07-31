@@ -5,6 +5,7 @@ import { parseHDF5StructureFromHeader, loadHDF5DatasetOnDemand, parseHDF5Bands, 
 import { processStructuredData } from '../utils/processStructuredData.js';
 import FileStructureTree from './FileStructureTree.js';
 
+
 const StructuredFileUpload = ({ onFileProcessed }) => {
   const [fileStructure, setFileStructure] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);

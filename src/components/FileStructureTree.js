@@ -13,12 +13,47 @@ const FileStructureTree = ({ structure, onDatasetSelect, selectedWavelength, sel
     setExpandedNodes(newExpanded);
   };
 
+  const validateDimensions = (node) => {
+    if (!node.shape || !Array.isArray(node.shape)) {
+      return { isValid: true, warnings: [] };
+    }
+
+    const warnings = [];
+    const dimensions = node.shape.length;
+
+    // Check if suitable for wavelength data (should be 1D)
+    const isGoodForWavelength = dimensions === 1;
+    if (!isGoodForWavelength && node.isWavelengthCandidate) {
+      warnings.push({
+        type: 'wavelength',
+        message: `Wavelength data should be 1-dimensional, but this dataset has ${dimensions}D shape [${node.shape.join(' × ')}]`
+      });
+    }
+
+    // Check if suitable for reflectance data (should be 3D)
+    const isGoodForReflectance = dimensions === 3;
+    if (!isGoodForReflectance && node.isReflectanceCandidate) {
+      warnings.push({
+        type: 'reflectance', 
+        message: `Reflectance data should be 3-dimensional (width × height × bands), but this dataset has ${dimensions}D shape [${node.shape.join(' × ')}]`
+      });
+    }
+
+    return {
+      isValid: warnings.length === 0,
+      warnings,
+      isGoodForWavelength,
+      isGoodForReflectance
+    };
+  };
+
   const renderNode = (node, level = 0) => {
     const isExpanded = expandedNodes.has(node.path);
     const hasChildren = node.children && node.children.length > 0;
     const isSelectable = node.type === 'dataset' || node.type === 'variable';
     const isWavelengthSelected = selectedWavelength === node.path;
     const isReflectanceSelected = selectedReflectance === node.path;
+    const validation = validateDimensions(node);
 
     return (
       <div key={node.path} style={{ marginLeft: level * 20 }}>
@@ -55,28 +90,41 @@ const FileStructureTree = ({ structure, onDatasetSelect, selectedWavelength, sel
             </span>
           )}
           
+          {/* Dimension Warning Icons */}
+          {isSelectable && validation.warnings.length > 0 && (
+            <span className="px-1 py-1 text-yellow-600 text-xs ml-1" title={validation.warnings.map(w => w.message).join('; ')}>
+              ⚠️
+            </span>
+          )}
+
           {/* Selection Buttons */}
           {isSelectable && (
             <div className="flex gap-1 ml-2">
               <button
-                onClick={() => onDatasetSelect(node.path, 'wavelength')}
+                onClick={() => validation.isGoodForWavelength && onDatasetSelect(node.path, 'wavelength')}
+                disabled={!validation.isGoodForWavelength}
                 className={`px-2 py-1 text-xs rounded ${
                   isWavelengthSelected 
                     ? 'bg-blue-500 text-white' 
-                    : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+                    : validation.isGoodForWavelength
+                      ? 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+                      : 'bg-gray-200 text-gray-500 cursor-not-allowed'
                 }`}
-                title="Select as wavelength data"
+                title={validation.isGoodForWavelength ? "Select as wavelength data" : "Invalid for wavelength data - must be 1-dimensional"}
               >
                 λ
               </button>
               <button
-                onClick={() => onDatasetSelect(node.path, 'reflectance')}
+                onClick={() => validation.isGoodForReflectance && onDatasetSelect(node.path, 'reflectance')}
+                disabled={!validation.isGoodForReflectance}
                 className={`px-2 py-1 text-xs rounded ${
                   isReflectanceSelected 
                     ? 'bg-green-500 text-white' 
-                    : 'bg-green-100 text-green-800 hover:bg-green-200'
+                    : validation.isGoodForReflectance
+                      ? 'bg-green-100 text-green-800 hover:bg-green-200'
+                      : 'bg-gray-200 text-gray-500 cursor-not-allowed'
                 }`}
-                title="Select as reflectance data"
+                title={validation.isGoodForReflectance ? "Select as reflectance data" : "Invalid for reflectance data - must be 3-dimensional"}
               >
                 R
               </button>
@@ -88,13 +136,25 @@ const FileStructureTree = ({ structure, onDatasetSelect, selectedWavelength, sel
         {isSelectable && (
           <div className="ml-6 text-xs text-gray-600">
             {node.shape && (
-              <span>Shape: [{node.shape.join(', ')}] </span>
+              <span>Shape: [{node.shape.join(', ')}] ({node.shape.length}D) </span>
             )}
             {node.size && (
               <span>Size: {node.size.toLocaleString()} </span>
             )}
             {node.dataType && (
               <span>Type: {node.dataType} </span>
+            )}
+            {/* Validation status */}
+            {node.shape && (
+              <div className="mt-1">
+                <span className={validation.isGoodForWavelength ? 'text-blue-600' : 'text-gray-400'}>
+                  λ: {validation.isGoodForWavelength ? 'Valid for wavelength' : 'Invalid (need 1D)'}
+                </span>
+                {' • '}
+                <span className={validation.isGoodForReflectance ? 'text-green-600' : 'text-gray-400'}>
+                  R: {validation.isGoodForReflectance ? 'Valid for reflectance' : 'Invalid (need 3D)'}
+                </span>
+              </div>
             )}
           </div>
         )}
@@ -163,7 +223,7 @@ const FileStructureTree = ({ structure, onDatasetSelect, selectedWavelength, sel
       
       <div className="text-sm">
         <div className="mb-2 text-xs text-gray-600">
-          Select datasets for wavelength (λ) and reflectance (R) data:
+          Select datasets for wavelength (λ) and reflectance (R) data. Wavelength data must be 1D, reflectance data must be 3D:
         </div>
         {/* Hide root level and show its children directly */}
         {structure.children && structure.children.length > 0 ? (
