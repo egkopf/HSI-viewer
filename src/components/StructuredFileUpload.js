@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { parseNetCDFStructure, loadNetCDFVariable } from '../utils/parseNetCDF.js';
 import { parseHDF5Structure, loadHDF5Dataset } from '../utils/parseHDF5Structure.js';
 import { parseHDF5StructureFromHeader, loadHDF5DatasetOnDemand, parseHDF5Bands, extractHDF5PixelSpectrum } from '../utils/hdf5HeaderParser.js';
+import { parseMatStructure, loadMatVariable } from '../utils/parseMAT.js';
 import { processStructuredData } from '../utils/processStructuredData.js';
 import FileStructureTree from './FileStructureTree.js';
 
@@ -43,10 +44,13 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
       let structure;
       const fileName = file.name.toLowerCase();
 
-      if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf') || fileName.endsWith('.h5') || fileName.endsWith('.hdf5')) {
-        console.log('Processing HDF5/NetCDF4 file:', fileName);
+      if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf') || fileName.endsWith('.h5') || fileName.endsWith('.hdf5') || fileName.endsWith('.mat')) {
+        console.log('Processing structured file:', fileName);
         
-        if (useHeaderOnly) {
+        if (fileName.endsWith('.mat')) {
+          console.log('Processing MATLAB file');
+          structure = await parseMatStructure(file);
+        } else if (useHeaderOnly) {
           console.log('Using header-only parsing (instant for any file size)');
           structure = await parseHDF5StructureFromHeader(file);
         } else if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf')) {
@@ -56,7 +60,7 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
           structure = await parseHDF5Structure(file);
         }
       } else {
-        throw new Error('Unsupported file format. Please select a NetCDF (.nc) or HDF5 (.h5) file.');
+        throw new Error('Unsupported file format. Please select a NetCDF (.nc), HDF5 (.h5), or MATLAB (.mat) file.');
       }
 
       setFileStructure(structure);
@@ -129,7 +133,25 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
       const fileName = selectedFile.name.toLowerCase();
       let wavelengthData, reflectanceData;
 
-      if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf')) {
+      if (fileName.endsWith('.mat')) {
+        // Load MATLAB variables
+        console.log('Loading MATLAB datasets');
+        
+        const wavelengthResult = await loadMatVariable(selectedFile, selectedWavelength);
+        const reflectanceResult = await loadMatVariable(selectedFile, selectedReflectance);
+        
+        wavelengthData = {
+          values: Array.from(wavelengthResult.data),
+          attributes: wavelengthResult.attributes
+        };
+        
+        reflectanceData = {
+          data: reflectanceResult.data,
+          shape: reflectanceResult.shape,
+          attributes: reflectanceResult.attributes
+        };
+        
+      } else if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf')) {
         // Load NetCDF datasets (only for files parsed with NetCDF parser)
         if (!fileStructure.isHeaderOnly) {
           const wavelengthPath = selectedWavelength.replace('/variables/', '');
@@ -288,7 +310,7 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
       <div className="border-2 border-dashed border-gray-300 rounded-lg p-6">
         <input
           type="file"
-          accept=".nc,.netcdf,.h5,.hdf5"
+          accept=".nc,.netcdf,.h5,.hdf5,.mat"
           onChange={(e) => handleFileSelect(e.target.files[0])}
           className="hidden"
           id="structured-file-input"
@@ -298,9 +320,9 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
           className="cursor-pointer flex flex-col items-center justify-center"
         >
           <div className="text-4xl mb-2">📁</div>
-          <div className="text-lg font-medium">Select NetCDF or HDF5 file</div>
+          <div className="text-lg font-medium">Select structured data file</div>
           <div className="text-sm text-gray-500">
-            Supported formats: .nc, .netcdf, .h5, .hdf5
+            Supported formats: .nc, .netcdf, .h5, .hdf5, .mat
           </div>
         </label>
       </div>
