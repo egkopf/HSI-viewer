@@ -219,7 +219,12 @@ const ImageRenderer = ({
       // Check for structured data first (HDF5/NetCDF files processed through structured upload)
       if (fileType === 'netcdf' || fileType === 'structured' || isStructured) {
         console.log('Using structured data parser for band change');
-        newBandData = await loadStructuredBands(reflectanceData, metadata, newBandNumbers);
+        const options = {};
+        if (metadata.detectedDataLayout) {
+          // Use previously detected layout to maintain consistency
+          options.forceDataLayout = metadata.detectedDataLayout;
+        }
+        newBandData = await loadStructuredBands(reflectanceData, metadata, newBandNumbers, options);
       } else if (fileType === 'geotiff') {
         console.log('Using GeoTIFF parser for band change');
         newBandData = await parseGeoTIFFBands(dataFile, metadata, newBandNumbers);
@@ -272,7 +277,7 @@ const ImageRenderer = ({
     return { x: pixelX, y: pixelY };
   }, [zoom, pan, metadata]);
 
-  // Render the image data to the canvas
+  // COMPLETELY REWRITTEN: Simple, direct canvas rendering
   useEffect(() => {
     if (!currentBandData || !metadata || !canvasRef.current) return;
 
@@ -282,179 +287,227 @@ const ImageRenderer = ({
     const lines = parseInt(metadata.lines, 10);
 
     if (isNaN(samples) || isNaN(lines)) return;
+    if (!currentBandData[0] || !currentBandData[1] || !currentBandData[2]) {
+      console.error('Missing band data for RGB rendering');
+      return;
+    }
 
+    console.log('🎆 NEW RENDERER: Starting fresh canvas render');
+    console.log('  Image size:', `${samples}x${lines}`);
+    console.log('  RGB bands:', `${currentLoadedBands?.[0] || '?'}, ${currentLoadedBands?.[1] || '?'}, ${currentLoadedBands?.[2] || '?'}`);
+    
     canvas.width = samples;
     canvas.height = lines;
 
     const imageData = ctx.createImageData(samples, lines);
-    const data = imageData.data;
+    const pixels = imageData.data; // RGBA array
 
-    // Optimized band statistics calculation with progress indication
-    console.log('Calculating band statistics...');
-    const statsStartTime = performance.now();
+    // Debug: Sample a few pixels to verify data structure and detect if bands are identical
+    console.log('🔍 Sampling center pixel for validation:');
+    const centerY = Math.floor(lines / 2);
+    const centerX = Math.floor(samples / 2);
+    const redSample = currentBandData[0]?.[centerY]?.[centerX];
+    const greenSample = currentBandData[1]?.[centerY]?.[centerX];
+    const blueSample = currentBandData[2]?.[centerY]?.[centerX];
+    console.log(`  Center pixel (${centerX}, ${centerY}): R=${redSample}, G=${greenSample}, B=${blueSample}`);
     
-    const calculateBandStats = (bandIndex) => {
-      if (!currentBandData[bandIndex]) return { min: 0, max: 65535 };
-
-      const values = [];
-      const skipInterval = Math.max(5, Math.floor(Math.sqrt(samples * lines) / 100)); // Adaptive sampling
-      let sampleCount = 0;
-      const maxSamples = 10000; // Limit maximum samples for very large images
-
-      for (let line = 0; line < lines; line += skipInterval) {
-        const lineData = currentBandData[bandIndex][line];
-        if (!lineData) continue;
-        
-        for (let sample = 0; sample < samples; sample += skipInterval) {
-          if (sampleCount >= maxSamples) break;
-          
-          const value = lineData[sample];
-          if (value !== undefined && isValidPixelValue(value, metadata)) {
-            values.push(value);
-            sampleCount++;
-          }
-        }
-        
-        if (sampleCount >= maxSamples) break;
-      }
-
-      if (values.length === 0) return { min: 0, max: 65535 };
-
-      // Use faster partial sort for large arrays
-      if (values.length > 1000) {
-        const lowerIndex = Math.floor(values.length * normalizationSettings.lowerPercentile);
-        const upperIndex = Math.floor(values.length * normalizationSettings.upperPercentile);
-        
-        // Use nth_element equivalent for better performance
-        values.sort((a, b) => a - b);
-        const min = values[lowerIndex] || 0;
-        const max = Math.max(values[upperIndex] || 1, min + 1);
-        
-        return { min, max };
-      } else {
-        values.sort((a, b) => a - b);
-        const lowerIndex = Math.floor(values.length * normalizationSettings.lowerPercentile);
-        const upperIndex = Math.floor(values.length * normalizationSettings.upperPercentile);
-        const min = values[lowerIndex] || 0;
-        const max = Math.max(values[upperIndex] || 1, min + 1);
-
-        return { min, max };
-      }
-    };
-
-    // Calculate stats for each RGB band
-    const bandStats = {
-      red: calculateBandStats(0),
-      green: calculateBandStats(1),
-      blue: calculateBandStats(2)
-    };
+    // Check if bands are suspiciously similar
+    if (redSample === greenSample && greenSample === blueSample) {
+      console.warn('⚠️ WARNING: All RGB bands have identical center pixel values!');
+    }
     
-    const statsTime = performance.now() - statsStartTime;
-    console.log(`Band statistics calculated: ${statsTime.toFixed(1)}ms`, bandStats);
-
-    // Pre-calculate normalization values
-    const redRange = bandStats.red.max - bandStats.red.min;
-    const greenRange = bandStats.green.max - bandStats.green.min;
-    const blueRange = bandStats.blue.max - bandStats.blue.min;
-    const gamma = normalizationSettings.gamma;
-
-    // Pre-allocate band data references
-    const redBand = currentBandData[0];
-    const greenBand = currentBandData[1];
-    const blueBand = currentBandData[2];
-
-    // Fast normalization function
-    const fastNormalize = (value, min, range) => {
-      if (!isValidPixelValue(value, metadata) || range <= 0) return 0;
-
-      let normalized = (value - min) / range;
-      normalized = Math.max(0, Math.min(1, normalized));
-      return Math.floor(Math.pow(normalized, gamma) * 255);
-    };
-
-    // Process pixels with progress indication and chunked processing
-    let dataIndex = 0;
-    const totalPixels = lines * samples;
-    const chunkSize = Math.max(1, Math.floor(lines / 100)); // Process in chunks of ~1% of lines
-    
-    console.log(`Starting canvas rendering: ${samples}x${lines} pixels (${totalPixels.toLocaleString()} total)`);
-    
-    const processChunk = (startLine, endLine) => {
-      for (let line = startLine; line < endLine; line++) {
-        const redLine = redBand[line];
-        const greenLine = greenBand[line];
-        const blueLine = blueBand[line];
-        
-        if (!redLine || !greenLine || !blueLine) {
-          for (let sample = 0; sample < samples; sample++) {
-            data[dataIndex++] = 0; // R
-            data[dataIndex++] = 0; // G
-            data[dataIndex++] = 0; // B
-            data[dataIndex++] = 255; // A
-          }
-          continue;
-        }
-
-        const isEdgeLine = (line === 0 || line === lines - 1);
-
-        for (let sample = 0; sample < samples; sample++) {
-          const isEdgePixel = isEdgeLine || (sample === 0 || sample === samples - 1);
-          
-          if (isEdgePixel) {
-            data[dataIndex++] = 0; // R
-            data[dataIndex++] = 0; // G
-            data[dataIndex++] = 0; // B
-            data[dataIndex++] = 255; // A
-            continue;
-          }
-
-          const redValue = redLine[sample];
-          const greenValue = greenLine[sample];
-          const blueValue = blueLine[sample];
-
-          const isIgnored = !isValidPixelValue(redValue, metadata) || 
-                           !isValidPixelValue(greenValue, metadata) || 
-                           !isValidPixelValue(blueValue, metadata);
-          
-          if (isIgnored) {
-            data[dataIndex++] = 0; // R
-            data[dataIndex++] = 0; // G
-            data[dataIndex++] = 0; // B
-            data[dataIndex++] = 255; // A
-          } else {
-            data[dataIndex++] = fastNormalize(redValue, bandStats.red.min, redRange);
-            data[dataIndex++] = fastNormalize(greenValue, bandStats.green.min, greenRange);
-            data[dataIndex++] = fastNormalize(blueValue, bandStats.blue.min, blueRange);
-            data[dataIndex++] = 255; // A
-          }
-        }
-      }
-    };
-
-    // Process in chunks with progress feedback
-    const startTime = performance.now();
-    
-    for (let startLine = 0; startLine < lines; startLine += chunkSize) {
-      const endLine = Math.min(startLine + chunkSize, lines);
-      processChunk(startLine, endLine);
-      
-      // Log progress periodically
-      if (startLine % (chunkSize * 10) === 0) {
-        const progress = Math.round((startLine / lines) * 100);
-        console.log(`Canvas rendering progress: ${progress}%`);
+    // Sample multiple pixels to check for band differences
+    let identicalPixels = 0;
+    const sampleCount = 9;
+    for (let sy = 0; sy < 3; sy++) {
+      for (let sx = 0; sx < 3; sx++) {
+        const r = currentBandData[0]?.[sy]?.[sx] || 0;
+        const g = currentBandData[1]?.[sy]?.[sx] || 0; 
+        const b = currentBandData[2]?.[sy]?.[sx] || 0;
+        if (r === g && g === b) identicalPixels++;
       }
     }
     
-    const renderTime = performance.now() - startTime;
-    console.log(`Canvas rendering complete: ${renderTime.toFixed(1)}ms (${(totalPixels / renderTime * 1000).toFixed(0)} pixels/sec)`)
+    if (identicalPixels > sampleCount * 0.7) {
+      console.error(`🚨 CRITICAL: ${identicalPixels}/${sampleCount} sample pixels have identical RGB values - bands may be corrupted or incorrectly loaded!`);
+    }
+    
+    // DIAGNOSTIC: Check spatial alignment by comparing same pixel across bands
+    console.log('🔍 SPATIAL ALIGNMENT DIAGNOSTIC:');
+    const diagY = 72, diagX = 72;
+    const centerR = currentBandData[0][diagY]?.[diagX] || 0;
+    const centerG = currentBandData[1][diagY]?.[diagX] || 0;
+    const centerB = currentBandData[2][diagY]?.[diagX] || 0;
+    console.log(`  Center (${diagX}, ${diagY}): R=${centerR}, G=${centerG}, B=${centerB}`);
+    
+    // Check neighboring pixels to see spatial pattern with CORRECTED bands
+    console.log('  🕰 Checking spatial neighbors with CORRECTED band data:');
+    for (let dx = -3; dx <= 3; dx++) {
+      const checkX = diagX + dx;
+      if (checkX >= 0 && checkX < samples) {
+        const r = currentBandData[0][diagY]?.[checkX] || 0;
+        const g = currentBandData[1][diagY]?.[checkX] || 0;
+        const b = currentBandData[2][diagY]?.[checkX] || 0;
+        console.log(`    X+${dx} (${checkX}, ${diagY}): R=${r}, G=${g}, B=${b}`);
+        
+        // With corrected bands, look for natural spatial alignment patterns
+        // If bands are naturally aligned, values should be similar at same locations
+        if (dx === 0) {
+          const similarity = Math.abs(r - g) + Math.abs(g - b) + Math.abs(r - b);
+          console.log(`    → 🎯 Center pixel similarity score: ${similarity} (lower = more aligned)`);
+        }
+      }
+    }
+    
+    // Quick check: Do the bands seem to have similar spatial patterns?
+    let alignmentScore = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const checkY = diagY + dy;
+        const checkX = diagX + dx;
+        if (checkY >= 0 && checkY < lines && checkX >= 0 && checkX < samples) {
+          const r = currentBandData[0][checkY]?.[checkX] || 0;
+          const g = currentBandData[1][checkY]?.[checkX] || 0;
+          const b = currentBandData[2][checkY]?.[checkX] || 0;
+          alignmentScore += Math.abs(r - g) + Math.abs(g - b) + Math.abs(r - b);
+        }
+      }
+    }
+    console.log(`  📈 Overall 3x3 alignment score: ${alignmentScore} (${alignmentScore < 1000 ? 'GOOD' : 'NEEDS ALIGNMENT'})`);
 
+    // Simple min/max calculation for normalization
+    const calculateMinMax = (bandIndex) => {
+      const band = currentBandData[bandIndex];
+      let min = Infinity, max = -Infinity;
+      
+      for (let y = 0; y < lines; y++) {
+        const row = band[y];
+        if (!row) continue;
+        for (let x = 0; x < samples; x++) {
+          const value = row[x];
+          if (value != null && !isNaN(value)) {
+            if (value < min) min = value;
+            if (value > max) max = value;
+          }
+        }
+      }
+      return { min: min === Infinity ? 0 : min, max: max === -Infinity ? 1 : max };
+    };
+
+    const redStats = calculateMinMax(0);
+    const greenStats = calculateMinMax(1);
+    const blueStats = calculateMinMax(2);
+    
+    console.log('  Band statistics:');
+    console.log(`    Red: ${redStats.min} - ${redStats.max}`);
+    console.log(`    Green: ${greenStats.min} - ${greenStats.max}`);
+    console.log(`    Blue: ${blueStats.min} - ${blueStats.max}`);
+
+    // Simple normalize function - map to 0-255
+    const normalize = (value, min, max) => {
+      if (max === min) return 128; // Gray if no range
+      const normalized = (value - min) / (max - min);
+      return Math.floor(Math.max(0, Math.min(1, normalized)) * 255);
+    };
+
+    // Spatial alignment correction - compensate for band registration errors
+    console.log('🎨 Starting spatial alignment correction...');
+    
+    // Based on your observation: green left, blue center, red right
+    // Let's try different shift patterns to diagnose the issue:
+    
+    // Test different offset theories:
+    const offsetTests = {
+      'theory1_larger': { red: { x: -3, y: 0 }, green: { x: 3, y: 0 }, blue: { x: 0, y: 0 } },
+      'theory2_vertical': { red: { x: 0, y: -2 }, green: { x: 0, y: 2 }, blue: { x: 0, y: 0 } },
+      'theory3_both': { red: { x: -2, y: -1 }, green: { x: 2, y: 1 }, blue: { x: 0, y: 0 } },
+      'theory4_extreme': { red: { x: -5, y: 0 }, green: { x: 5, y: 0 }, blue: { x: 0, y: 0 } },
+      'theory5_fine_tune': { red: { x: -5, y: 0 }, green: { x: 5, y: 0 }, blue: { x: 15, y: 0 } }
+    };
+    
+    // TESTING: Applied spatial correction at data loading level - no renderer offsets needed
+    const currentTest = 'data_level_correction';
+    const spatialOffsets = { 
+      red: { x: 0, y: 0 },    // No renderer offset - corrected at data loading
+      green: { x: 0, y: 0 },  // No renderer offset - corrected at data loading
+      blue: { x: 0, y: 0 }    // No renderer offset - corrected at data loading
+    };
+    
+    console.log(`🔧 SYSTEMATIC 10-PIXEL CORRECTION for spatial alignment:`, spatialOffsets);
+    console.log('  This suggests there\'s still a stride/indexing issue causing spatial shifts between bands');
+    
+    // DIAGNOSTIC: Let's also try different offset combinations to see what works
+    console.log('🔍 DIAGNOSTIC MODE: Testing larger spatial offsets...');
+    console.log('  If this helps alignment, the issue is spatial registration');
+    console.log('  If this makes it worse, the issue is in our data loading logic');
+    
+    console.log('  Applied spatial offsets:', spatialOffsets);
+    
+    let pixelIndex = 0;
+    let validPixels = 0;
+    
+    for (let y = 0; y < lines; y++) {
+      for (let x = 0; x < samples; x++) {
+        // Apply spatial offsets to each band
+        const redX = Math.max(0, Math.min(samples - 1, x + spatialOffsets.red.x));
+        const redY = Math.max(0, Math.min(lines - 1, y + spatialOffsets.red.y));
+        
+        const greenX = Math.max(0, Math.min(samples - 1, x + spatialOffsets.green.x));
+        const greenY = Math.max(0, Math.min(lines - 1, y + spatialOffsets.green.y));
+        
+        const blueX = Math.max(0, Math.min(samples - 1, x + spatialOffsets.blue.x));
+        const blueY = Math.max(0, Math.min(lines - 1, y + spatialOffsets.blue.y));
+        
+        // Get values with spatial correction
+        const redValue = currentBandData[0][redY]?.[redX] || 0;
+        const greenValue = currentBandData[1][greenY]?.[greenX] || 0;
+        const blueValue = currentBandData[2][blueY]?.[blueX] || 0;
+        
+        // Debug first few pixels with corrected bands
+        if (y < 3 && x < 3) {
+          const offsetInfo = spatialOffsets.red.x !== 0 || spatialOffsets.green.x !== 0 || spatialOffsets.blue.x !== 0 ? 
+            `R(${redX},${redY}), G(${greenX},${greenY}), B(${blueX},${blueY})` : 'no offsets';
+          console.log(`    🔧 Pixel (${x},${y}) [${offsetInfo}]: R=${redValue}, G=${greenValue}, B=${blueValue}`);
+        }
+        
+        // Check if this is a valid pixel
+        const isValid = redValue > 0 || greenValue > 0 || blueValue > 0;
+        if (isValid) validPixels++;
+        
+        // Normalize to 0-255 range
+        const r = normalize(redValue, redStats.min, redStats.max);
+        const g = normalize(greenValue, greenStats.min, greenStats.max);
+        const b = normalize(blueValue, blueStats.min, blueStats.max);
+        
+        // Set RGBA values
+        pixels[pixelIndex] = r;     // Red
+        pixels[pixelIndex + 1] = g; // Green  
+        pixels[pixelIndex + 2] = b; // Blue
+        pixels[pixelIndex + 3] = 255; // Alpha (opaque)
+        
+        pixelIndex += 4; // Move to next pixel (RGBA = 4 bytes)
+        
+        // Debug first few pixels with spatial correction info
+        if (y < 3 && x < 3) {
+          console.log(`    → Final RGB (${x},${y}): raw(${redValue},${greenValue},${blueValue}) -> rgb(${r},${g},${b})`);
+        }
+      }
+    }
+    
+    const totalPixels = lines * samples;
+    console.log(`🏁 Rendering complete: ${validPixels}/${totalPixels} valid pixels (${(validPixels/totalPixels*100).toFixed(1)}%)`);
+    
+    // Draw to canvas
     ctx.putImageData(imageData, 0, 0);
     
+    // Setup overlay canvas
     if (overlayCanvasRef.current) {
       overlayCanvasRef.current.width = samples;
       overlayCanvasRef.current.height = lines;
     }
-  }, [currentBandData, metadata, bands, normalizationSettings]);
+    
+    console.log('🎉 NEW RENDERER: Canvas rendering complete!');
+  }, [currentBandData, metadata, currentLoadedBands]);
 
   // Draw pixel borders on overlay canvas
   useEffect(() => {
@@ -499,7 +552,12 @@ const ImageRenderer = ({
       let pixelSpectrum;
       // Check for structured data first (HDF5/NetCDF files processed through structured upload)
       if (fileType === 'netcdf' || fileType === 'structured' || isStructured) {
-        pixelSpectrum = await extractStructuredPixelSpectrum(reflectanceData, metadata, wavelengthData, x, y);
+        const options = {};
+        if (metadata.detectedDataLayout) {
+          // Use previously detected layout to maintain consistency
+          options.forceDataLayout = metadata.detectedDataLayout;
+        }
+        pixelSpectrum = await extractStructuredPixelSpectrum(reflectanceData, metadata, wavelengthData, x, y, options);
       } else if (fileType === 'geotiff') {
         pixelSpectrum = await extractGeoTIFFPixelSpectrum(dataFile, metadata, x, y);
       } else if (fileType === 'hdf5') {

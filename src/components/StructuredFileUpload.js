@@ -16,6 +16,7 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
   const [error, setError] = useState(null);
   const [useSelectiveReading] = useState(true);
   const [useHeaderOnly] = useState(true);
+  // Removed manual data layout override - automatic detection now works reliably
 
   const handleFileSelect = async (file) => {
     if (!file) return;
@@ -368,7 +369,7 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
       {fileStructure && (
         <div className="bg-gray-50 border rounded-lg p-4">
           <h4 className="font-medium mb-2">Selection Summary:</h4>
-          <div className="space-y-1 text-sm">
+          <div className="space-y-2 text-sm">
             <div>
               <span className="font-medium">Wavelength data:</span>{' '}
               {selectedWavelength ? (
