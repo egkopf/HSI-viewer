@@ -557,6 +557,10 @@ const ImageRenderer = ({
           // Use previously detected layout to maintain consistency
           options.forceDataLayout = metadata.detectedDataLayout;
         }
+        // Pass dataFile for NPY on-demand spectrum extraction
+        if (metadata.isNpyFile) {
+          options.dataFile = dataFile;
+        }
         pixelSpectrum = await extractStructuredPixelSpectrum(reflectanceData, metadata, wavelengthData, x, y, options);
       } else if (fileType === 'geotiff') {
         pixelSpectrum = await extractGeoTIFFPixelSpectrum(dataFile, metadata, x, y);
@@ -906,6 +910,9 @@ const ImageRenderer = ({
     const minValue = Math.max(0, spectrumMin * 0.9);
     const maxValue = spectrumMax * 1.1;
 
+    // Debug: Log the calculated y-axis range
+    console.log(`📊 Y-axis scaling: min=${minValue.toFixed(2)}, max=${maxValue.toFixed(2)}, range=${(maxValue - minValue).toFixed(2)}`);
+
     // Calculate global wavelength range from all images with unit conversion
     let globalMinWavelength = Infinity;
     let globalMaxWavelength = -Infinity;
@@ -1124,11 +1131,25 @@ const ImageRenderer = ({
     const yTicks = [];
 
     for (let i = 0; i < yTickCount; i++) {
-      const value = 0 + (i / (yTickCount - 1)) * (maxValue - minValue);
+      const value = minValue + (i / (yTickCount - 1)) * (maxValue - minValue);
       const y = paddingY + graphHeight - (i / (yTickCount - 1)) * graphHeight;
+      
+      // Format the value appropriately - use decimals if values are small or have meaningful decimals
+      let formattedValue;
+      if (maxValue - minValue < 10) {
+        // For small ranges, show 2 decimal places
+        formattedValue = value.toFixed(2);
+      } else if (maxValue - minValue < 100) {
+        // For medium ranges, show 1 decimal place
+        formattedValue = value.toFixed(1);
+      } else {
+        // For large ranges, round to integers but show thousands separator if needed
+        formattedValue = Math.round(value).toLocaleString();
+      }
+      
       yTicks.push({
         y,
-        value: Math.round(value)
+        value: formattedValue
       });
     }
 

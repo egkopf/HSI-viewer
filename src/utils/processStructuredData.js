@@ -13,9 +13,33 @@ export function processStructuredData(wavelengthData, reflectanceData, metadata,
   if (metadata.originalShape.length === 3) {
     // Handle different data layouts
     const shape = metadata.originalShape;
-    const data = new Uint16Array(reflectanceData.data);
     
-    console.log('🔍 MATLAB Data Layout Detection:');
+    // Handle different data types for NPY vs other formats
+    let data;
+    let isSelectiveBandData = false;
+    
+    // Check if this is selective band data from NPY files
+    if (reflectanceData.isSelectiveLoading && Array.isArray(reflectanceData.data)) {
+      console.log('🎯 Processing selective band data from NPY file');
+      isSelectiveBandData = true;
+      data = reflectanceData.data; // This is already band-organized data
+    } else if (reflectanceData.data instanceof ArrayBuffer) {
+      // For NPY files, the data might already be typed array or ArrayBuffer
+      data = new Uint16Array(reflectanceData.data);
+    } else if (ArrayBuffer.isView(reflectanceData.data)) {
+      // Already a typed array, use as-is or convert as needed
+      if (reflectanceData.data instanceof Uint16Array) {
+        data = reflectanceData.data;
+      } else {
+        // Convert other typed arrays to Uint16Array
+        data = new Uint16Array(reflectanceData.data);
+      }
+    } else {
+      // Fallback for other formats
+      data = new Uint16Array(reflectanceData.data);
+    }
+    
+    console.log('🔍 Structured Data Layout Detection:');
     console.log('  Original shape:', shape);
     console.log('  Expected dimensions - bands:', bands, 'lines:', lines, 'samples:', samples);
     
@@ -82,19 +106,37 @@ export function processStructuredData(wavelengthData, reflectanceData, metadata,
     metadata.detectedDataLayout = isSpectralFirst ? 'spectral-first' : 'interleaved';
     metadata.layoutDetectionMethod = layoutDetectionMethod;
     
-    // Get default RGB bands for initial display
-    const defaultBands = selectDefaultRGBBands({
-      bands,
-      wavelengthValues: wavelengthData.values
-    });
+    // Handle band processing differently for selective vs full data
+    let defaultBands;
+    let bandData = [];
     
-    console.log('  🌈 RGB Band Selection:');
-    console.log('    Red band:', defaultBands[0], '- wavelength:', wavelengthData.values[defaultBands[0] - 1]);
-    console.log('    Green band:', defaultBands[1], '- wavelength:', wavelengthData.values[defaultBands[1] - 1]);
-    console.log('    Blue band:', defaultBands[2], '- wavelength:', wavelengthData.values[defaultBands[2] - 1]);
-    
-    // Load the default RGB bands
-    for (let i = 0; i < defaultBands.length; i++) {
+    if (isSelectiveBandData) {
+      // For selective band data, use the already-loaded bands
+      console.log('🎯 Using pre-loaded selective bands');
+      defaultBands = reflectanceData.loadedBands || [1, 2, 3];
+      bandData = data; // Data is already organized as band arrays
+      
+      console.log('  🌈 Selective Band Information:');
+      for (let i = 0; i < defaultBands.length; i++) {
+        const bandNumber = defaultBands[i];
+        const wavelength = wavelengthData.values[bandNumber - 1];
+        console.log(`    Band ${bandNumber}: wavelength ${wavelength}nm`);
+      }
+      
+    } else {
+      // For full data, get default RGB bands and process normally
+      defaultBands = selectDefaultRGBBands({
+        bands,
+        wavelengthValues: wavelengthData.values
+      });
+      
+      console.log('  🌈 RGB Band Selection:');
+      console.log('    Red band:', defaultBands[0], '- wavelength:', wavelengthData.values[defaultBands[0] - 1]);
+      console.log('    Green band:', defaultBands[1], '- wavelength:', wavelengthData.values[defaultBands[1] - 1]);
+      console.log('    Blue band:', defaultBands[2], '- wavelength:', wavelengthData.values[defaultBands[2] - 1]);
+      
+      // Load the default RGB bands
+      for (let i = 0; i < defaultBands.length; i++) {
       const bandNumber = defaultBands[i];
       const bandIndex = bandNumber - 1; // Convert to 0-based
       
@@ -131,56 +173,8 @@ export function processStructuredData(wavelengthData, reflectanceData, metadata,
       
       console.log(`  🔧 Loading band ${bandNumber} (index ${bandIndex}) from ${isSpectralFirst ? 'spectral-first' : 'interleaved'} data...`);
       
-      // ROOT CAUSE INVESTIGATION: The spatial offsets revealed a pattern!
-      // Red (band 26): needs -5 offset  
-      // Green (band 16): needs +5 offset
-      // Blue (band 6): needs +15 offset
-      // This suggests our indexing formula might be BACKWARDS or have wrong stride!
-      
-      const centerY = Math.floor(lines / 2);
-      const centerX = Math.floor(samples / 2);
-      let centerIndex, rawCenterValue;
-      
-      if (isSpectralFirst) {
-        centerIndex = bandIndex * lines * samples + centerY * samples + centerX;
-      } else {
-        centerIndex = centerY * samples * bands + centerX * bands + bandIndex;
-      }
-      
-      rawCenterValue = centerIndex < data.length ? data[centerIndex] : 'OUT_OF_BOUNDS';
-      console.log(`    🎯 Center pixel (${centerX}, ${centerY}) raw value: ${rawCenterValue} (index ${centerIndex})`);
-      
-      // THEORY TEST: What if our indexing formula is wrong?
-      // Let's try different indexing formulas and see which gives the spatially correct data
-      console.log(`    🤔 INDEXING THEORY TESTS for band ${bandNumber}:`);
-      
-      // Current formula: line * samples * bands + sample * bands + bandIndex
-      const currentFormula = centerY * samples * bands + centerX * bands + bandIndex;
-      const currentValue = data[currentFormula];
-      
-      // Alternative 1: Maybe bands and samples are swapped?
-      const alt1Formula = centerY * bands * samples + centerX * samples + bandIndex;
-      const alt1Value = alt1Formula < data.length ? data[alt1Formula] : 'OOB';
-      
-      // Alternative 2: Maybe it's actually spectral-first but detected wrong?
-      const alt2Formula = bandIndex * lines * samples + centerY * samples + centerX;
-      const alt2Value = alt2Formula < data.length ? data[alt2Formula] : 'OOB';
-      
-      // Alternative 3: Different band stride?
-      const alt3Formula = centerY * samples * bands + centerX * bands + (bands - 1 - bandIndex); // Reverse band order
-      const alt3Value = alt3Formula < data.length ? data[alt3Formula] : 'OOB';
-      
-      console.log(`    Current: ${currentValue} | Alt1 (swap dims): ${alt1Value} | Alt2 (spectral-first): ${alt2Value} | Alt3 (reverse bands): ${alt3Value}`);
-      
-      // Check if any alternative formula gives us the value we'd expect at the spatially corrected location
-      if (bandNumber === 6) { // Blue band - needs +15 spatial offset to align
-        const expectedX = Math.min(samples - 1, centerX + 15);
-        // Removed problematic reference to currentBandData
-        // Removed console.log that referenced undefined expectedValue
-        
-        // Check if any formula gives us this expected value at the original location
-        // Removed comparisons that used undefined expectedValue
-      }
+      // Use correct band index (reversed for better alignment)
+      const testBandIndex = (bands - 1) - bandIndex;
       
       if (isSpectralFirst) {
         // [bands, lines, samples] layout
@@ -269,11 +263,13 @@ export function processStructuredData(wavelengthData, reflectanceData, metadata,
       }
       
       bandData.push(bandArray);
+      }
     }
     
-    // Update metadata with default bands
+    // Update metadata with default bands  
     metadata.defaultBands = defaultBands;
     metadata.loadedBands = defaultBands;
+    metadata.isSelectiveLoading = isSelectiveBandData;
     
     return {
       bandData,
@@ -352,10 +348,33 @@ export function loadStructuredBands(reflectanceData, metadata, bandNumbers, opti
 }
 
 // Extract spectral profile from structured data
-export function extractStructuredPixelSpectrum(reflectanceData, metadata, wavelengthData, x, y, options = {}) {
+export async function extractStructuredPixelSpectrum(reflectanceData, metadata, wavelengthData, x, y, options = {}) {
   const { samples, lines, bands } = metadata;
+  
+  // Check if this is NPY data with selective loading
+  if (metadata.isSelectiveLoading && metadata.npyMetadata && options.dataFile) {
+    console.log('🎯 Using NPY on-demand pixel spectrum extraction');
+    
+    // Import NPY extraction function
+    const { extractNpyPixelSpectrum } = await import('./parseNPY.js');
+    
+    try {
+      // Extract spectrum directly from file using selective reading
+      return await extractNpyPixelSpectrum(
+        options.dataFile, 
+        metadata.npyMetadata, 
+        x, 
+        y, 
+        wavelengthData
+      );
+    } catch (error) {
+      console.error('NPY pixel spectrum extraction failed:', error);
+      throw error;
+    }
+  }
+  
+  // For non-NPY data or non-selective loading, use the original method
   const shape = metadata.originalShape;
-  const data = new Uint16Array(reflectanceData.data);
   
   // Bounds check
   if (x < 0 || x >= samples || y < 0 || y >= lines) {
@@ -364,6 +383,41 @@ export function extractStructuredPixelSpectrum(reflectanceData, metadata, wavele
   
   console.log(`🎯 Extracting spectrum for pixel (${x}, ${y})`);
   console.log('  Using layout:', metadata.detectedDataLayout || 'unknown');
+  
+  // Check if we have selective band data that can't provide full spectrum
+  if (reflectanceData.isSelectiveLoading && Array.isArray(reflectanceData.data)) {
+    console.warn('⚠️  Cannot extract full spectrum from selective band data. Only RGB bands available.');
+    
+    // Create a limited spectrum from the available RGB bands
+    const spectrum = [];
+    const loadedBands = metadata.loadedBands || [1, 2, 3];
+    
+    for (let i = 0; i < loadedBands.length; i++) {
+      const bandNumber = loadedBands[i];
+      const bandData = reflectanceData.data[i];
+      
+      if (bandData && bandData[y] && bandData[y][x] !== undefined) {
+        const value = bandData[y][x];
+        const wavelength = wavelengthData.values ? wavelengthData.values[bandNumber - 1] : bandNumber;
+        
+        spectrum.push({
+          band: bandNumber,
+          wavelength,
+          value
+        });
+      }
+    }
+    
+    if (spectrum.length === 0) {
+      throw new Error(`Pixel (${x}, ${y}) has no valid spectral data - try clicking on a different pixel or use full spectrum loading`);
+    }
+    
+    console.log(`📊 Limited spectrum extracted: ${spectrum.length} bands from selective loading`);
+    return spectrum;
+  }
+  
+  // Original full data extraction method
+  const data = new Uint16Array(reflectanceData.data);
   
   // Use previously detected layout or re-detect
   let isSpectralFirst = false;

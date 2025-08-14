@@ -17,6 +17,7 @@
     "mat-for-js": "^1.1.0",
     "netcdfjs": "^3.0.0",
     "next": "^14.2.15",
+    "npyjs": "^0.7.0",
     "plotly.js": "^2.35.2",
     "react": "^18",
     "react-dom": "^18",
