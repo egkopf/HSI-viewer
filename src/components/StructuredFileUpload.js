@@ -8,7 +8,7 @@ import { processStructuredData } from '../utils/processStructuredData.js';
 import FileStructureTree from './FileStructureTree.js';
 
 
-const StructuredFileUpload = ({ onFileProcessed }) => {
+const StructuredFileUpload = ({ onFileProcessed, initialFile = null, onCancel = null }) => {
   const [fileStructure, setFileStructure] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedWavelength, setSelectedWavelength] = useState(null);
@@ -17,6 +17,13 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
   const [error, setError] = useState(null);
   const [useSelectiveReading] = useState(true);
   const [useHeaderOnly] = useState(true);
+
+  // Handle initial file if provided
+  React.useEffect(() => {
+    if (initialFile && !selectedFile) {
+      handleFileSelect(initialFile);
+    }
+  }, [initialFile]);
 
   const handleFileSelect = async (file) => {
     if (!file) return;
@@ -334,26 +341,45 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
 
   return (
     <div className="space-y-4">
-      {/* File Upload */}
-      <div className="border-2 border-dashed border-gray-300 rounded-lg p-6">
-        <input
-          type="file"
-          accept=".nc,.netcdf,.h5,.hdf5,.mat,.npy"
-          onChange={(e) => handleFileSelect(e.target.files[0])}
-          className="hidden"
-          id="structured-file-input"
-        />
-        <label
-          htmlFor="structured-file-input"
-          className="cursor-pointer flex flex-col items-center justify-center"
-        >
-          <div className="text-4xl mb-2">📁</div>
-          <div className="text-lg font-medium">Select structured data file</div>
-          <div className="text-sm text-gray-500">
-            Supported formats: .nc, .netcdf, .h5, .hdf5, .mat, .npy
-          </div>
-        </label>
-      </div>
+      {/* Cancel Button */}
+      {onCancel && (
+        <div className="flex justify-between items-center">
+          <button
+            onClick={onCancel}
+            className="text-blue-500 hover:text-blue-700 text-sm"
+          >
+            ← Back to file selection
+          </button>
+          {selectedFile && (
+            <div className="text-sm text-gray-600">
+              Processing: {selectedFile.name}
+            </div>
+          )}
+        </div>
+      )}
+      
+      {/* File Upload - only show if no initial file */}
+      {!initialFile && (
+        <div className="border-2 border-dashed border-gray-300 rounded-lg p-6">
+          <input
+            type="file"
+            accept=".nc,.netcdf,.h5,.hdf5,.mat,.npy"
+            onChange={(e) => handleFileSelect(e.target.files[0])}
+            className="hidden"
+            id="structured-file-input"
+          />
+          <label
+            htmlFor="structured-file-input"
+            className="cursor-pointer flex flex-col items-center justify-center"
+          >
+            <div className="text-4xl mb-2">📁</div>
+            <div className="text-lg font-medium">Select structured data file</div>
+            <div className="text-sm text-gray-500">
+              Supported formats: .nc, .netcdf, .h5, .hdf5, .mat, .npy
+            </div>
+          </label>
+        </div>
+      )}
 
       {/* Processing Status */}
       {isProcessing && (
@@ -419,17 +445,28 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
 
       {/* Process Button */}
       {fileStructure && (
-        <button
-          onClick={handleProcessFile}
-          disabled={!selectedWavelength || !selectedReflectance || isProcessing}
-          className={`w-full py-3 px-4 rounded-lg font-medium ${
-            selectedWavelength && selectedReflectance && !isProcessing
-              ? 'bg-blue-500 text-white hover:bg-blue-600'
-              : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-          }`}
-        >
-          {isProcessing ? 'Processing...' : 'Process File'}
-        </button>
+        <div className="flex gap-2">
+          {onCancel && (
+            <button
+              onClick={onCancel}
+              disabled={isProcessing}
+              className="py-3 px-4 rounded-lg font-medium bg-gray-500 text-white hover:bg-gray-600 disabled:bg-gray-300 disabled:text-gray-500"
+            >
+              Cancel
+            </button>
+          )}
+          <button
+            onClick={handleProcessFile}
+            disabled={!selectedWavelength || !selectedReflectance || isProcessing}
+            className={`flex-1 py-3 px-4 rounded-lg font-medium ${
+              selectedWavelength && selectedReflectance && !isProcessing
+                ? 'bg-blue-500 text-white hover:bg-blue-600'
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            }`}
+          >
+            {isProcessing ? 'Processing...' : 'Process File'}
+          </button>
+        </div>
       )}
     </div>
   );

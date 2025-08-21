@@ -10,23 +10,24 @@ const FileUpload = ({ onDataReady }) => {
   const [wavelengthInputValue, setWavelengthInputValue] = useState('');
   const [wavelengthUnit, setWavelengthUnit] = useState('nm');
   const [pendingFileData, setPendingFileData] = useState(null);
-  const [uploadMode, setUploadMode] = useState('standard'); // 'standard' or 'structured'
+  const [structuredFile, setStructuredFile] = useState(null);
 
   const handleFileInputChange = (e) => {
     const files = Array.from(e.target.files);
     
-    // Filter files to allow only valid ENVI, structured, and GeoTIFF files
+    // Filter files to allow all supported formats
     const validFiles = files.filter(file => {
       const fileName = file.name.toLowerCase();
       
-      // Always allow these structured formats
+      // Allow structured formats
       if (fileName.endsWith('.h5') || fileName.endsWith('.hdf5') || 
           fileName.endsWith('.nc') || fileName.endsWith('.netcdf') ||
+          fileName.endsWith('.mat') || fileName.endsWith('.npy') ||
           fileName.endsWith('.tif') || fileName.endsWith('.tiff')) {
         return true;
       }
       
-      // Always allow ENVI files with proper extensions
+      // Allow ENVI files with proper extensions
       if (fileName.endsWith('.hdr') || fileName.endsWith('.bsq') || 
           fileName.endsWith('.bil') || fileName.endsWith('.bip')) {
         return true;
@@ -44,7 +45,7 @@ const FileUpload = ({ onDataReady }) => {
     if (validFiles.length !== files.length) {
       const rejectedFiles = files.filter(file => !validFiles.includes(file));
       const rejectedNames = rejectedFiles.map(f => f.name).join(', ');
-      alert(`Some files were not accepted: ${rejectedNames}\n\nAllowed files:\n- NetCDF/HDF5: .nc, .netcdf, .h5, .hdf5\n- GeoTIFF: .tif, .tiff\n- ENVI: .hdr (header), .bsq/.bil/.bip (binary), or no extension (binary)`);
+      alert(`Some files were not accepted: ${rejectedNames}\n\nAllowed files:\n- Structured: .nc, .netcdf, .h5, .hdf5, .mat, .npy\n- GeoTIFF: .tif, .tiff\n- ENVI: .hdr (header), .bsq/.bil/.bip (binary), or no extension (binary)`);
     }
     
     if (validFiles.length > 0) {
@@ -74,18 +75,19 @@ const FileUpload = ({ onDataReady }) => {
       console.log('HDF5 files found:', h5Files.map(f => f.name));
       console.log('NetCDF files found:', ncFiles.map(f => f.name));
 
-      // Check if we have structured files that might need special handling
-      if ((h5Files.length > 0 || ncFiles.length > 0) && uploadMode === 'standard') {
-        // Ask user if they want to use structured mode
-        const useStructured = window.confirm(
-          'This appears to be a structured file (HDF5/NetCDF). Would you like to use the structured file viewer to select specific datasets for wavelength and reflectance data?'
-        );
-        
-        if (useStructured) {
-          setUploadMode('structured');
-          setProcessing(false);
-          return;
-        }
+      // Check for structured files that need dataset selection
+      const matFiles = [...files].filter(file => 
+        file.name.toLowerCase().endsWith('.mat'));
+      
+      const npyFiles = [...files].filter(file => 
+        file.name.toLowerCase().endsWith('.npy'));
+
+      // Route structured files automatically to StructuredFileUpload
+      if (h5Files.length > 0 || ncFiles.length > 0 || matFiles.length > 0 || npyFiles.length > 0) {
+        console.log('Structured files detected - using structured upload mode');
+        setStructuredFile(files[0]);
+        setProcessing(false);
+        return;
       }
 
       if (h5Files.length > 0) {
@@ -350,43 +352,41 @@ const FileUpload = ({ onDataReady }) => {
       loadedBands: metadata.defaultBands,
       wavelengthData,
       reflectanceData,
-      fileType: file.name.toLowerCase().endsWith('.nc') ? 'netcdf' : 'hdf5',
+      fileType: getFileType(file.name),
       isStructured: true
     };
 
-    // For structured uploads, we already have the wavelength data
+    // Clear structured file state and proceed
+    setStructuredFile(null);
     setProcessing(false);
     onDataReady(fileData);
   };
 
+  // Helper function to determine file type
+  const getFileType = (fileName) => {
+    const lowerName = fileName.toLowerCase();
+    if (lowerName.endsWith('.nc') || lowerName.endsWith('.netcdf')) return 'netcdf';
+    if (lowerName.endsWith('.h5') || lowerName.endsWith('.hdf5')) return 'hdf5';
+    if (lowerName.endsWith('.mat')) return 'matlab';
+    if (lowerName.endsWith('.npy')) return 'numpy';
+    return 'unknown';
+  };
+
+  // Handle canceling structured upload to go back to regular upload
+  const handleStructuredCancel = () => {
+    setStructuredFile(null);
+  };
+
   return (
     <div className="space-y-4">
-      {/* Upload Mode Toggle */}
-      <div className="flex items-center gap-4 mb-4">
-        <span className="text-sm font-medium">Upload Mode:</span>
-        <label className="flex items-center gap-2">
-          <input
-            type="radio"
-            value="standard"
-            checked={uploadMode === 'standard'}
-            onChange={(e) => setUploadMode(e.target.value)}
-            disabled={processing || showWavelengthInput}
-          />
-          <span className="text-sm">Standard</span>
-        </label>
-        <label className="flex items-center gap-2">
-          <input
-            type="radio"
-            value="structured"
-            checked={uploadMode === 'structured'}
-            onChange={(e) => setUploadMode(e.target.value)}
-            disabled={processing || showWavelengthInput}
-          />
-          <span className="text-sm">Structured (NetCDF/HDF5)</span>
-        </label>
-      </div>
-
-      {uploadMode === 'standard' ? (
+      {/* Show structured upload if structured file detected, otherwise show regular upload */}
+      {structuredFile ? (
+        <StructuredFileUpload 
+          initialFile={structuredFile}
+          onFileProcessed={handleStructuredFileProcessed}
+          onCancel={handleStructuredCancel}
+        />
+      ) : (
         <div className="relative">
           <input
             type="file"
@@ -430,8 +430,6 @@ const FileUpload = ({ onDataReady }) => {
             </div>
           )}
         </div>
-      ) : (
-        <StructuredFileUpload onFileProcessed={handleStructuredFileProcessed} />
       )}
 
       {showWavelengthInput && (
