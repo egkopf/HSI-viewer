@@ -3,6 +3,7 @@ import { parseNetCDFStructure, loadNetCDFVariable } from '../utils/parseNetCDF.j
 import { parseHDF5Structure, loadHDF5Dataset } from '../utils/parseHDF5Structure.js';
 import { parseHDF5StructureFromHeader, loadHDF5DatasetOnDemand, parseHDF5Bands, extractHDF5PixelSpectrum } from '../utils/hdf5HeaderParser.js';
 import { parseMatStructure, loadMatVariable } from '../utils/parseMAT.js';
+import { parseNpyStructure, loadNpyVariable } from '../utils/parseNPY.js';
 import { processStructuredData } from '../utils/processStructuredData.js';
 import FileStructureTree from './FileStructureTree.js';
 
@@ -44,12 +45,15 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
       let structure;
       const fileName = file.name.toLowerCase();
 
-      if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf') || fileName.endsWith('.h5') || fileName.endsWith('.hdf5') || fileName.endsWith('.mat')) {
+      if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf') || fileName.endsWith('.h5') || fileName.endsWith('.hdf5') || fileName.endsWith('.mat') || fileName.endsWith('.npy')) {
         console.log('Processing structured file:', fileName);
         
         if (fileName.endsWith('.mat')) {
           console.log('Processing MATLAB file');
           structure = await parseMatStructure(file);
+        } else if (fileName.endsWith('.npy')) {
+          console.log('Processing NumPy file');
+          structure = await parseNpyStructure(file);
         } else if (useHeaderOnly) {
           console.log('Using header-only parsing (instant for any file size)');
           structure = await parseHDF5StructureFromHeader(file);
@@ -60,7 +64,7 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
           structure = await parseHDF5Structure(file);
         }
       } else {
-        throw new Error('Unsupported file format. Please select a NetCDF (.nc), HDF5 (.h5), or MATLAB (.mat) file.');
+        throw new Error('Unsupported file format. Please select a NetCDF (.nc), HDF5 (.h5), MATLAB (.mat), or NumPy (.npy) file.');
       }
 
       setFileStructure(structure);
@@ -139,6 +143,24 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
         
         const wavelengthResult = await loadMatVariable(selectedFile, selectedWavelength);
         const reflectanceResult = await loadMatVariable(selectedFile, selectedReflectance);
+        
+        wavelengthData = {
+          values: Array.from(wavelengthResult.data),
+          attributes: wavelengthResult.attributes
+        };
+        
+        reflectanceData = {
+          data: reflectanceResult.data,
+          shape: reflectanceResult.shape,
+          attributes: reflectanceResult.attributes
+        };
+        
+      } else if (fileName.endsWith('.npy')) {
+        // Load NumPy datasets
+        console.log('Loading NumPy datasets');
+        
+        const wavelengthResult = await loadNpyVariable(selectedFile, selectedWavelength);
+        const reflectanceResult = await loadNpyVariable(selectedFile, selectedReflectance);
         
         wavelengthData = {
           values: Array.from(wavelengthResult.data),
@@ -241,11 +263,17 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
       }
 
       // Create metadata object compatible with existing pipeline
-      const metadata = createMetadataFromStructuredData(
+      let metadata = createMetadataFromStructuredData(
         wavelengthData,
         reflectanceData,
         selectedFile.name
       );
+      
+      // Add NPY-specific metadata for on-demand spectrum extraction
+      if (fileName.endsWith('.npy') && fileStructure.npyMetadata) {
+        metadata.npyMetadata = fileStructure.npyMetadata;
+        metadata.isNpyFile = true;
+      }
 
       // Process the structured data for the existing pipeline
       const processedData = processStructuredData(wavelengthData, reflectanceData, metadata);
@@ -310,7 +338,7 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
       <div className="border-2 border-dashed border-gray-300 rounded-lg p-6">
         <input
           type="file"
-          accept=".nc,.netcdf,.h5,.hdf5,.mat"
+          accept=".nc,.netcdf,.h5,.hdf5,.mat,.npy"
           onChange={(e) => handleFileSelect(e.target.files[0])}
           className="hidden"
           id="structured-file-input"
@@ -322,7 +350,7 @@ const StructuredFileUpload = ({ onFileProcessed }) => {
           <div className="text-4xl mb-2">📁</div>
           <div className="text-lg font-medium">Select structured data file</div>
           <div className="text-sm text-gray-500">
-            Supported formats: .nc, .netcdf, .h5, .hdf5, .mat
+            Supported formats: .nc, .netcdf, .h5, .hdf5, .mat, .npy
           </div>
         </label>
       </div>
