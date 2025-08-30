@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
-import { parseNetCDFStructure, loadNetCDFVariable } from '../utils/parseNetCDF.js';
 import { parseHDF5Structure, loadHDF5Dataset } from '../utils/parseHDF5Structure.js';
 import { parseHDF5StructureFromHeader, loadHDF5DatasetOnDemand, parseHDF5Bands, extractHDF5PixelSpectrum } from '../utils/hdf5HeaderParser.js';
-import { parseMatStructure, loadMatVariable } from '../utils/parseMAT.js';
 import { parseNpyStructure, loadNpyVariable } from '../utils/parseNPY.js';
 import { processStructuredData } from '../utils/processStructuredData.js';
 import FileStructureTree from './FileStructureTree.js';
@@ -52,26 +50,20 @@ const StructuredFileUpload = ({ onFileProcessed, initialFile = null, onCancel = 
       let structure;
       const fileName = file.name.toLowerCase();
 
-      if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf') || fileName.endsWith('.h5') || fileName.endsWith('.hdf5') || fileName.endsWith('.mat') || fileName.endsWith('.npy')) {
+      if (fileName.endsWith('.h5') || fileName.endsWith('.hdf5') || fileName.endsWith('.npy')) {
         console.log('Processing structured file:', fileName);
         
-        if (fileName.endsWith('.mat')) {
-          console.log('Processing MATLAB file');
-          structure = await parseMatStructure(file);
-        } else if (fileName.endsWith('.npy')) {
+        if (fileName.endsWith('.npy')) {
           console.log('Processing NumPy file');
           structure = await parseNpyStructure(file);
         } else if (useHeaderOnly) {
           console.log('Using header-only parsing (instant for any file size)');
           structure = await parseHDF5StructureFromHeader(file);
-        } else if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf')) {
-          // For NetCDF files without header-only, use NetCDF parser for NetCDF3 support
-          structure = await parseNetCDFStructure(file);
         } else {
           structure = await parseHDF5Structure(file);
         }
       } else {
-        throw new Error('Unsupported file format. Please select a NetCDF (.nc), HDF5 (.h5), MATLAB (.mat), or NumPy (.npy) file.');
+        throw new Error('Unsupported file format. Please select a HDF5 (.h5) or NumPy (.npy) file.');
       }
 
       setFileStructure(structure);
@@ -144,25 +136,7 @@ const StructuredFileUpload = ({ onFileProcessed, initialFile = null, onCancel = 
       const fileName = selectedFile.name.toLowerCase();
       let wavelengthData, reflectanceData;
 
-      if (fileName.endsWith('.mat')) {
-        // Load MATLAB variables
-        console.log('Loading MATLAB datasets');
-        
-        const wavelengthResult = await loadMatVariable(selectedFile, selectedWavelength);
-        const reflectanceResult = await loadMatVariable(selectedFile, selectedReflectance);
-        
-        wavelengthData = {
-          values: Array.from(wavelengthResult.data),
-          attributes: wavelengthResult.attributes
-        };
-        
-        reflectanceData = {
-          data: reflectanceResult.data,
-          shape: reflectanceResult.shape,
-          attributes: reflectanceResult.attributes
-        };
-        
-      } else if (fileName.endsWith('.npy')) {
+      if (fileName.endsWith('.npy')) {
         // Load NumPy datasets
         console.log('Loading NumPy datasets');
         
@@ -179,62 +153,6 @@ const StructuredFileUpload = ({ onFileProcessed, initialFile = null, onCancel = 
           shape: reflectanceResult.shape,
           attributes: reflectanceResult.attributes
         };
-        
-      } else if (fileName.endsWith('.nc') || fileName.endsWith('.netcdf')) {
-        // Load NetCDF datasets (only for files parsed with NetCDF parser)
-        if (!fileStructure.isHeaderOnly) {
-          const wavelengthPath = selectedWavelength.replace('/variables/', '');
-          const reflectancePath = selectedReflectance.replace('/variables/', '');
-          
-          const fileSizeGB = selectedFile.size / (1024 * 1024 * 1024);
-          const enableSelectiveReading = fileSizeGB > 1 && useSelectiveReading;
-          
-          console.log(`Loading NetCDF datasets from ${fileSizeGB.toFixed(1)}GB file, selective reading: ${enableSelectiveReading}`);
-          
-          const wavelengthResult = await loadNetCDFVariable(selectedFile, wavelengthPath, { useSelectiveReading: enableSelectiveReading });
-          const reflectanceResult = await loadNetCDFVariable(selectedFile, reflectancePath, { useSelectiveReading: enableSelectiveReading });
-          
-          wavelengthData = {
-            values: Array.from(wavelengthResult.data),
-            attributes: wavelengthResult.attributes
-          };
-          
-          reflectanceData = {
-            data: reflectanceResult.data,
-            shape: reflectanceResult.shape,
-            dimensions: reflectanceResult.dimensions,
-            attributes: reflectanceResult.attributes
-          };
-        } else {
-          // For header-only parsed files, use persistent HDF5 dataset loading
-          const fileSizeGB = selectedFile.size / (1024 * 1024 * 1024);
-          const enableSelectiveReading = fileSizeGB > 0.1 && useSelectiveReading; // Lower threshold to 100MB
-          
-          console.log(`Loading HDF5/NetCDF4 datasets from ${fileSizeGB.toFixed(1)}GB file, persistent handles: ${enableSelectiveReading}`);
-          
-          let wavelengthResult, reflectanceResult;
-          if (enableSelectiveReading) {
-            // Use new persistent file handle approach (no file reloading!)
-            console.log('Using persistent file handles for HDF5/NetCDF4 loading...');
-            wavelengthResult = await loadHDF5DatasetOnDemand(selectedFile, selectedWavelength);
-            reflectanceResult = await loadHDF5DatasetOnDemand(selectedFile, selectedReflectance);
-          } else {
-            // Fallback to old approach for smaller files
-            wavelengthResult = await loadHDF5Dataset(selectedFile, selectedWavelength, { useSelectiveReading: false });
-            reflectanceResult = await loadHDF5Dataset(selectedFile, selectedReflectance, { useSelectiveReading: false });
-          }
-          
-          wavelengthData = {
-            values: Array.from(wavelengthResult.data),
-            attributes: wavelengthResult.attributes
-          };
-          
-          reflectanceData = {
-            data: reflectanceResult.data,
-            shape: reflectanceResult.shape,
-            attributes: reflectanceResult.attributes
-          };
-        }
         
       } else if (fileName.endsWith('.h5') || fileName.endsWith('.hdf5')) {
         // Load HDF5 datasets with H5Web or selective reading for large files
@@ -363,7 +281,7 @@ const StructuredFileUpload = ({ onFileProcessed, initialFile = null, onCancel = 
         <div className="border-2 border-dashed border-gray-300 rounded-lg p-6">
           <input
             type="file"
-            accept=".nc,.netcdf,.h5,.hdf5,.mat,.npy"
+            accept=".h5,.hdf5,.npy"
             onChange={(e) => handleFileSelect(e.target.files[0])}
             className="hidden"
             id="structured-file-input"
@@ -375,7 +293,7 @@ const StructuredFileUpload = ({ onFileProcessed, initialFile = null, onCancel = 
             <div className="text-4xl mb-2">📁</div>
             <div className="text-lg font-medium">Select structured data file</div>
             <div className="text-sm text-gray-500">
-              Supported formats: .nc, .netcdf, .h5, .hdf5, .mat, .npy
+              Supported formats: .h5, .hdf5, .npy
             </div>
           </label>
         </div>

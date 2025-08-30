@@ -21,8 +21,7 @@ const FileUpload = ({ onDataReady }) => {
       
       // Allow structured formats
       if (fileName.endsWith('.h5') || fileName.endsWith('.hdf5') || 
-          fileName.endsWith('.nc') || fileName.endsWith('.netcdf') ||
-          fileName.endsWith('.mat') || fileName.endsWith('.npy') ||
+          fileName.endsWith('.npy') ||
           fileName.endsWith('.tif') || fileName.endsWith('.tiff')) {
         return true;
       }
@@ -45,7 +44,7 @@ const FileUpload = ({ onDataReady }) => {
     if (validFiles.length !== files.length) {
       const rejectedFiles = files.filter(file => !validFiles.includes(file));
       const rejectedNames = rejectedFiles.map(f => f.name).join(', ');
-      alert(`Some files were not accepted: ${rejectedNames}\n\nAllowed files:\n- Structured: .nc, .netcdf, .h5, .hdf5, .mat, .npy\n- GeoTIFF: .tif, .tiff\n- ENVI: .hdr (header), .bsq/.bil/.bip (binary), or no extension (binary)`);
+      alert(`Some files were not accepted: ${rejectedNames}\n\nAllowed files:\n- Structured: .h5, .hdf5, .npy\n- GeoTIFF: .tif, .tiff\n- ENVI: .hdr (header), .bsq/.bil/.bip (binary), or no extension (binary)`);
     }
     
     if (validFiles.length > 0) {
@@ -66,24 +65,17 @@ const FileUpload = ({ onDataReady }) => {
         file.name.toLowerCase().endsWith('.h5') || 
         file.name.toLowerCase().endsWith('.hdf5'));
 
-      const ncFiles = [...files].filter(file => 
-        file.name.toLowerCase().endsWith('.nc') || 
-        file.name.toLowerCase().endsWith('.netcdf'));
-
       console.log('Files uploaded:', [...files].map(f => f.name));
       console.log('TIFF files found:', tiffFiles.map(f => f.name));
       console.log('HDF5 files found:', h5Files.map(f => f.name));
-      console.log('NetCDF files found:', ncFiles.map(f => f.name));
 
       // Check for structured files that need dataset selection
-      const matFiles = [...files].filter(file => 
-        file.name.toLowerCase().endsWith('.mat'));
       
       const npyFiles = [...files].filter(file => 
         file.name.toLowerCase().endsWith('.npy'));
 
       // Route structured files automatically to StructuredFileUpload
-      if (h5Files.length > 0 || ncFiles.length > 0 || matFiles.length > 0 || npyFiles.length > 0) {
+      if (h5Files.length > 0 || npyFiles.length > 0) {
         console.log('Structured files detected - using structured upload mode');
         setStructuredFile(files[0]);
         setProcessing(false);
@@ -365,9 +357,7 @@ const FileUpload = ({ onDataReady }) => {
   // Helper function to determine file type
   const getFileType = (fileName) => {
     const lowerName = fileName.toLowerCase();
-    if (lowerName.endsWith('.nc') || lowerName.endsWith('.netcdf')) return 'netcdf';
     if (lowerName.endsWith('.h5') || lowerName.endsWith('.hdf5')) return 'hdf5';
-    if (lowerName.endsWith('.mat')) return 'matlab';
     if (lowerName.endsWith('.npy')) return 'numpy';
     return 'unknown';
   };
